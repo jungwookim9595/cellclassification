@@ -1,0 +1,5 @@
+dim 2
+seed 1000
+data_size 10000
+query_size 100
+distribution gauss
