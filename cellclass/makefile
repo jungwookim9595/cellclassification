@@ -38,7 +38,7 @@ main.o: $(global) $(module_mpi) $(walldist) $(cellclass) main.f90
 	$(FC) -c main.f90
 
 clean : 
-	rm a.out *.mod *.o output/debug/* output/result/G/* output/result/SDF/*
+	rm cellclass.exe *.mod *.o output/debug/* output/result/G/* output/result/SDF/* 
 
 exe :
 	mpirun -np 16 ./cellclass.exe >> output/runnung_log.txt
