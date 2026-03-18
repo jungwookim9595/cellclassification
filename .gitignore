@@ -3,3 +3,6 @@ gensurf/devidedsolid
 gensurf/output
 cellclass/output
 cellcalss/cellclass.exe
+cellclass/cellclass.mod
+gensurf/*.stl
+gensurf/gensurf.mod

@@ -13,7 +13,7 @@ n3m = 128
 /
 
 &MPI_procs
-np1 = 4
+np1 = 1
 np2 = 2
 np3 = 2
 /
@@ -37,9 +37,9 @@ gamma3 = 3.0
 /
 
 &aspect_ratio
-Aspect1 = 4
-H       = 1
-Aspect3 = 2
+Aspect1 = 1
+H       = 2
+Aspect3 = 1
 /
 
 &sim_parameter
