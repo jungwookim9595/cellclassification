@@ -195,12 +195,487 @@ module mpi_cellclass
 
     end subroutine read_stl
     
+     
+    !=========================================================================
+    ! Phase 1: Find narrowband cells using triangle AABB intersection
+    !=========================================================================
+    subroutine find_narrowband_cells(band_mask, bandwidth)
+      implicit none
+ 
+      logical, dimension(0:n1sub,0:n2sub,0:n3sub), intent(out) :: band_mask
+      double precision, intent(in)                              :: bandwidth
+ 
+      integer          :: ielem, i_lo, i_hi, j_lo, j_hi, k_lo, k_hi
+      double precision :: xmin, xmax, ymin, ymax, zmin, zmax
+      double precision :: p1x, p1y, p1z, p2x, p2y, p2z, p3x, p3y, p3z
+ 
+      band_mask = .false.
+ 
+      do ielem = 1, para%nelem
+        ! Get triangle vertex coordinates
+        p1x = vert(elem(ielem)%vert(1))%xyz(1)
+        p1y = vert(elem(ielem)%vert(1))%xyz(2)
+        p1z = vert(elem(ielem)%vert(1))%xyz(3)
+        p2x = vert(elem(ielem)%vert(2))%xyz(1)
+        p2y = vert(elem(ielem)%vert(2))%xyz(2)
+        p2z = vert(elem(ielem)%vert(2))%xyz(3)
+        p3x = vert(elem(ielem)%vert(3))%xyz(1)
+        p3y = vert(elem(ielem)%vert(3))%xyz(2)
+        p3z = vert(elem(ielem)%vert(3))%xyz(3)
+ 
+        ! Compute AABB expanded by bandwidth
+        xmin = min(p1x, p2x, p3x) - bandwidth
+        xmax = max(p1x, p2x, p3x) + bandwidth
+        ymin = min(p1y, p2y, p3y) - bandwidth
+        ymax = max(p1y, p2y, p3y) + bandwidth
+        zmin = min(p1z, p2z, p3z) - bandwidth
+        zmax = max(p1z, p2z, p3z) + bandwidth
+ 
+        ! Find grid index ranges using binary search
+        call find_grid_index(x1_sub, n1sub, xmin, i_lo)
+        call find_grid_index(x1_sub, n1sub, xmax, i_hi)
+        call find_grid_index(x2_sub, n2sub, ymin, j_lo)
+        call find_grid_index(x2_sub, n2sub, ymax, j_hi)
+        call find_grid_index(x3_sub, n3sub, zmin, k_lo)
+        call find_grid_index(x3_sub, n3sub, zmax, k_hi)
+ 
+        ! Clamp to subdomain bounds
+        i_lo = max(i_lo, 0);  i_hi = min(i_hi, n1sub)
+        j_lo = max(j_lo, 0);  j_hi = min(j_hi, n2sub)
+        k_lo = max(k_lo, 0);  k_hi = min(k_hi, n3sub)
+ 
+        ! Mark cells in the narrowband
+        if (i_lo <= i_hi .and. j_lo <= j_hi .and. k_lo <= k_hi) then
+          band_mask(i_lo:i_hi, j_lo:j_hi, k_lo:k_hi) = .true.
+        endif
+      enddo
+ 
+    end subroutine find_narrowband_cells
+ 
+    !=========================================================================
+    ! Utility: Binary search for grid index (find leftmost index where x_arr(idx) <= val)
+    !=========================================================================
+    subroutine find_grid_index(x_arr, nmax, val, idx)
+      implicit none
+ 
+      integer, intent(in)                        :: nmax
+      double precision, dimension(0:nmax), intent(in) :: x_arr
+      double precision, intent(in)               :: val
+      integer, intent(out)                       :: idx
+ 
+      integer :: lo, hi, mid
+ 
+      ! Handle out-of-bounds
+      if (val <= x_arr(0)) then
+        idx = 0
+        return
+      endif
+      if (val >= x_arr(nmax)) then
+        idx = nmax
+        return
+      endif
+ 
+      ! Binary search
+      lo = 0
+      hi = nmax
+      do while (hi - lo > 1)
+        mid = (lo + hi) / 2
+        if (x_arr(mid) <= val) then
+          lo = mid
+        else
+          hi = mid
+        endif
+      enddo
+      idx = lo
+ 
+    end subroutine find_grid_index
+ 
+    !=========================================================================
+    ! Phase 2: Compute SDF only for narrowband cells (reuses ANN logic)
+    !=========================================================================
+    subroutine compute_sdf_narrowband(sgned, band_mask)
+      implicit none
+ 
+      double precision, dimension(0:n1sub,0:n2sub,0:n3sub), intent(out) :: sgned
+      logical, dimension(0:n1sub,0:n2sub,0:n3sub), intent(in)          :: band_mask
+ 
+      integer                                               ::  i, j, k, LL, mm, id
+      integer         , allocatable, dimension(:)           ::  indexarray, indexarray2, idmapping, idmapping2
+      double precision, allocatable, dimension(:)           ::  distarray, distarray2
+      double precision                                      ::  dist, distance, sign_SDF
+      integer                                               ::  restriction
+      double precision, dimension(3)                        ::  real_clst_pt, real_clst_norm, clst_pt, clst_norm
+      double precision, dimension(3)                        ::  qp
+      double precision, dimension(para%nvert)               ::  ptx, pty, ptz
+      double precision                                      ::  check_dist
+      integer                                               ::  band_count, total_count, loop_count
+ 
+      allocate(indexarray(nsearch), idmapping(nsearch), distarray(nsearch))
+      allocate(indexarray2(para%nvert), idmapping2(para%nvert), distarray2(para%nvert))
+ 
+      ! Create ANN-tree
+      ptx(:) = vert(:)%xyz(1)
+      pty(:) = vert(:)%xyz(2)
+      ptz(:) = vert(:)%xyz(3)
+      call wldst_create_tree(ptx(1), pty(1), ptz(1), para%nvert)
+ 
+      ! Initialize: band exterior gets large positive value (undetermined)
+      sgned = 999.0d0
+ 
+      band_count = 0
+      total_count = (n1sub+1) * (n2sub+1) * (n3sub+1)
+      loop_count = 0
+      do k = 0, n3sub
+      do j = 0, n2sub
+      do i = 0, n1sub
+ 
+        if (.not. band_mask(i,j,k)) cycle   ! Skip non-narrowband cells
+ 
+        band_count = band_count + 1
+        distance = 999.0d0
+ 
+        ! Get distarray & index array from ANN-tree
+        qp(1) = x1_sub(i)
+        qp(2) = x2_sub(j)
+        qp(3) = x3_sub(k)
+        call wldst_getdists_xyz(qp(1), qp(2), qp(3), indexarray, distarray, nsearch)
+ 
+        restriction = 0
+        do LL = 1, nsearch
+          if (distarray(LL) .LT. distarray(1)) then
+            write(*,*) 'ANN search error'
+            stop
+          else
+            check_dist = (ptx(indexarray(1)+1)-ptx(indexarray(LL)+1))**2 &
+            &           +(pty(indexarray(1)+1)-pty(indexarray(LL)+1))**2 &
+            &           +(ptz(indexarray(1)+1)-ptz(indexarray(LL)+1))**2
+            check_dist = sqrt(check_dist)
+          endif
+          if (check_dist .LT. 2*dist_CAD) then
+            restriction = restriction + 1
+            idmapping(restriction) = LL
+          endif
+        enddo
+ 
+        if (restriction .EQ. nsearch) then ! extend search
+          restriction = 0
+          call wldst_getdists_xyz(qp(1), qp(2), qp(3), indexarray2, distarray2, para%nvert)
+          do mm = 1, para%nvert
+            if (distarray2(mm) .LT. distarray2(1)) then
+              write(*,*) 'ANN extend search error'
+              stop
+            else
+              check_dist = (ptx(indexarray2(1)+1)-ptx(indexarray2(mm)+1))**2 &
+              &           +(pty(indexarray2(1)+1)-pty(indexarray2(mm)+1))**2 &
+              &           +(ptz(indexarray2(1)+1)-ptz(indexarray2(mm)+1))**2
+              check_dist = sqrt(check_dist)
+            endif
+            if (check_dist .LT. 2*dist_CAD) then
+              restriction = restriction + 1
+              idmapping2(restriction) = mm
+            endif
+          enddo
+        endif
+ 
+        ! Find real closest point & distance
+        if (restriction .LT. nsearch) then
+          do LL = 1, restriction
+            id = idmapping(LL)
+            do mm = 1, vert(indexarray(id)+1)%share(1)
+              call triangle_distance(qp, vert(indexarray(id)+1)%share(mm+1), dist, clst_pt, clst_norm)
+              if (dist .LT. distance) then
+                distance = dist
+                real_clst_pt(:)   = clst_pt(:)
+                real_clst_norm(:) = clst_norm(:)
+              endif
+            enddo
+          enddo
+        else
+          do LL = 1, restriction
+            id = idmapping2(LL)
+            do mm = 1, vert(indexarray2(id)+1)%share(1)
+              call triangle_distance(qp, vert(indexarray2(id)+1)%share(mm+1), dist, clst_pt, clst_norm)
+              if (dist .LT. distance) then
+                distance = dist
+                real_clst_pt(:)   = clst_pt(:)
+                real_clst_norm(:) = clst_norm(:)
+              endif
+            enddo
+          enddo
+        endif
+ 
+        ! Get signed distance function
+        sign_SDF     = (x1_sub(i)-real_clst_pt(1))*(real_clst_norm(1)) &
+        &             +(x2_sub(j)-real_clst_pt(2))*(real_clst_norm(2)) &
+        &             +(x3_sub(k)-real_clst_pt(3))*(real_clst_norm(3))
+        if (abs(sign_SDF) > 0.0d0) then
+          sign_SDF = sign_SDF / abs(sign_SDF)
+        else
+          sign_SDF = 1.0d0
+        endif
+ 
+        sgned(i,j,k) = sign_SDF * distance
+        
+        loop_count = loop_count + 1
+
+        if (mod(loop_count,100)==0) then
+          if(myrank==0) write(*,*) '  [Narrowband] Loop count: ', loop_count, ' / Total: ', total_count
+        endif
+      enddo
+      enddo
+      enddo
+ 
+      if (myrank == 0) then
+        write(*,'(A,I10,A,I10,A,F6.2,A)') '  [Narrowband] Band cells: ', band_count, &
+          ' / Total: ', total_count, ' (', 100.0d0*dble(band_count)/dble(total_count), '%)'
+      endif
+ 
+      call wldst_delete_tree
+      deallocate(indexarray, indexarray2, distarray, distarray2)
+ 
+    end subroutine compute_sdf_narrowband
+ 
+    !=========================================================================
+    ! Phase 3: Fast Sweeping sign propagation for band exterior
+    ! Propagates SDF sign from narrowband boundary outward using 8-direction sweeps
+    !=========================================================================
+    subroutine propagate_sign_sweep(sgned, band_mask)
+      implicit none
+ 
+      double precision, dimension(0:n1sub,0:n2sub,0:n3sub), intent(inout) :: sgned
+      logical, dimension(0:n1sub,0:n2sub,0:n3sub), intent(in)             :: band_mask
+ 
+      integer :: i, j, k, sweep, isweep
+      integer :: i_start, i_end, i_step
+      integer :: j_start, j_end, j_step
+      integer :: k_start, k_end, k_step
+      double precision :: neighbor_val, large_val
+      integer :: num_sweeps
+      logical :: changed
+ 
+      large_val = 998.0d0  ! Threshold to detect unset values
+ 
+      ! Perform 8-direction sweeps to propagate sign from band boundary
+      ! Each sweep goes in one of 8 diagonal directions
+      num_sweeps = 2  ! Usually 2 passes of 8-sweep are sufficient
+ 
+      do isweep = 1, num_sweeps
+      do sweep = 1, 8
+ 
+        select case(sweep)
+        case(1); i_start=0;     i_end=n1sub; i_step=1;  j_start=0;     j_end=n2sub; j_step=1;  k_start=0;     k_end=n3sub; k_step=1
+        case(2); i_start=n1sub; i_end=0;     i_step=-1; j_start=0;     j_end=n2sub; j_step=1;  k_start=0;     k_end=n3sub; k_step=1
+        case(3); i_start=0;     i_end=n1sub; i_step=1;  j_start=n2sub; j_end=0;     j_step=-1; k_start=0;     k_end=n3sub; k_step=1
+        case(4); i_start=n1sub; i_end=0;     i_step=-1; j_start=n2sub; j_end=0;     j_step=-1; k_start=0;     k_end=n3sub; k_step=1
+        case(5); i_start=0;     i_end=n1sub; i_step=1;  j_start=0;     j_end=n2sub; j_step=1;  k_start=n3sub; k_end=0;     k_step=-1
+        case(6); i_start=n1sub; i_end=0;     i_step=-1; j_start=0;     j_end=n2sub; j_step=1;  k_start=n3sub; k_end=0;     k_step=-1
+        case(7); i_start=0;     i_end=n1sub; i_step=1;  j_start=n2sub; j_end=0;     j_step=-1; k_start=n3sub; k_end=0;     k_step=-1
+        case(8); i_start=n1sub; i_end=0;     i_step=-1; j_start=n2sub; j_end=0;     j_step=-1; k_start=n3sub; k_end=0;     k_step=-1
+        end select
+ 
+        do k = k_start, k_end, k_step
+        do j = j_start, j_end, j_step
+        do i = i_start, i_end, i_step
+ 
+          ! Only process unset cells (band exterior)
+          if (band_mask(i,j,k)) cycle
+          if (abs(sgned(i,j,k)) < large_val) cycle
+ 
+          ! Check 6-connected neighbors for a known sign
+          ! X-neighbors
+          if (i+1 <= n1sub) then
+            neighbor_val = sgned(i+1,j,k)
+            if (abs(neighbor_val) < large_val) then
+              if (neighbor_val > 0.0d0) then
+                sgned(i,j,k) = large_val
+              else
+                sgned(i,j,k) = -large_val
+              endif
+              cycle
+            endif
+          endif
+          if (i-1 >= 0) then
+            neighbor_val = sgned(i-1,j,k)
+            if (abs(neighbor_val) < large_val) then
+              if (neighbor_val > 0.0d0) then
+                sgned(i,j,k) = large_val
+              else
+                sgned(i,j,k) = -large_val
+              endif
+              cycle
+            endif
+          endif
+          ! Y-neighbors
+          if (j+1 <= n2sub) then
+            neighbor_val = sgned(i,j+1,k)
+            if (abs(neighbor_val) < large_val) then
+              if (neighbor_val > 0.0d0) then
+                sgned(i,j,k) = large_val
+              else
+                sgned(i,j,k) = -large_val
+              endif
+              cycle
+            endif
+          endif
+          if (j-1 >= 0) then
+            neighbor_val = sgned(i,j-1,k)
+            if (abs(neighbor_val) < large_val) then
+              if (neighbor_val > 0.0d0) then
+                sgned(i,j,k) = large_val
+              else
+                sgned(i,j,k) = -large_val
+              endif
+              cycle
+            endif
+          endif
+          ! Z-neighbors
+          if (k+1 <= n3sub) then
+            neighbor_val = sgned(i,j,k+1)
+            if (abs(neighbor_val) < large_val) then
+              if (neighbor_val > 0.0d0) then
+                sgned(i,j,k) = large_val
+              else
+                sgned(i,j,k) = -large_val
+              endif
+              cycle
+            endif
+          endif
+          if (k-1 >= 0) then
+            neighbor_val = sgned(i,j,k-1)
+            if (abs(neighbor_val) < large_val) then
+              if (neighbor_val > 0.0d0) then
+                sgned(i,j,k) = large_val
+              else
+                sgned(i,j,k) = -large_val
+              endif
+              cycle
+            endif
+          endif
+ 
+        enddo
+        enddo
+        enddo
+ 
+      enddo ! sweep
+      enddo ! isweep
+ 
+    end subroutine propagate_sign_sweep
+ 
+    !=========================================================================
+    ! Phase 4: Ghost cell communication for SDF (3-direction MPI exchange)
+    !=========================================================================
+    subroutine ghostcell_communication_sdf()
+      implicit none
+ 
+      integer                                       ::  i, j, k
+      integer                                       ::  buffsize
+      integer                                       ::  row
+      double precision, allocatable, dimension(:)   ::  sendeast, sendwest
+      double precision, allocatable, dimension(:)   ::  recveast, recvwest
+      integer                                       ::  request(4)
+      integer                                       ::  ierr
+ 
+      ! X-direction
+      buffsize = (n2sub+1)*(n3sub+1)
+      allocate(sendeast(0:buffsize-1), sendwest(0:buffsize-1))
+      allocate(recveast(0:buffsize-1), recvwest(0:buffsize-1))
+ 
+      do k = 0, n3sub
+      do j = 0, n2sub
+          row           = (n2sub+1)*k + j
+          sendeast(row) = sgned_g(n1msub, j, k)
+          sendwest(row) = sgned_g(1,      j, k)
+      enddo
+      enddo
+ 
+      call MPI_Isend(sendeast, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x1%east_rank, 111, comm_1d_x1%mpi_comm, request(1), ierr)
+      call MPI_Irecv(recvwest, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x1%west_rank, 111, comm_1d_x1%mpi_comm, request(2), ierr)
+      call MPI_Isend(sendwest, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x1%west_rank, 222, comm_1d_x1%mpi_comm, request(3), ierr)
+      call MPI_Irecv(recveast, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x1%east_rank, 222, comm_1d_x1%mpi_comm, request(4), ierr)
+      call MPI_Waitall(4, request, MPI_STATUSES_IGNORE, ierr)
+ 
+      do k = 0, n3sub
+      do j = 0, n2sub
+          row              = (n2sub+1)*k + j
+          sgned_g(0,     j, k) = recvwest(row)
+          sgned_g(n1sub, j, k) = recveast(row)
+      enddo
+      enddo
+ 
+      deallocate(sendeast, sendwest, recveast, recvwest)
+ 
+      ! Y-direction
+      buffsize = (n1sub+1)*(n3sub+1)
+      allocate(sendeast(0:buffsize-1), sendwest(0:buffsize-1))
+      allocate(recveast(0:buffsize-1), recvwest(0:buffsize-1))
+ 
+      do k = 0, n3sub
+      do i = 0, n1sub
+          row           = (n1sub+1)*k + i
+          sendeast(row) = sgned_g(i, n2msub, k)
+          sendwest(row) = sgned_g(i, 1,      k)
+      enddo
+      enddo
+ 
+      call MPI_Isend(sendeast, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x2%east_rank, 333, comm_1d_x2%mpi_comm, request(1), ierr)
+      call MPI_Irecv(recvwest, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x2%west_rank, 333, comm_1d_x2%mpi_comm, request(2), ierr)
+      call MPI_Isend(sendwest, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x2%west_rank, 444, comm_1d_x2%mpi_comm, request(3), ierr)
+      call MPI_Irecv(recveast, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x2%east_rank, 444, comm_1d_x2%mpi_comm, request(4), ierr)
+      call MPI_Waitall(4, request, MPI_STATUSES_IGNORE, ierr)
+ 
+      do k = 0, n3sub
+      do i = 0, n1sub
+          row              = (n1sub+1)*k + i
+          sgned_g(i, 0,     k) = recvwest(row)
+          sgned_g(i, n2sub, k) = recveast(row)
+      enddo
+      enddo
+ 
+      deallocate(sendeast, sendwest, recveast, recvwest)
+ 
+      ! Z-direction
+      buffsize = (n1sub+1)*(n2sub+1)
+      allocate(sendeast(0:buffsize-1), sendwest(0:buffsize-1))
+      allocate(recveast(0:buffsize-1), recvwest(0:buffsize-1))
+ 
+      do j = 0, n2sub
+      do i = 0, n1sub
+          row           = (n1sub+1)*j + i
+          sendeast(row) = sgned_g(i, j, n3msub)
+          sendwest(row) = sgned_g(i, j, 1     )
+      enddo
+      enddo
+ 
+      call MPI_Isend(sendeast, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x3%east_rank, 555, comm_1d_x3%mpi_comm, request(1), ierr)
+      call MPI_Irecv(recvwest, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x3%west_rank, 555, comm_1d_x3%mpi_comm, request(2), ierr)
+      call MPI_Isend(sendwest, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x3%west_rank, 666, comm_1d_x3%mpi_comm, request(3), ierr)
+      call MPI_Irecv(recveast, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x3%east_rank, 666, comm_1d_x3%mpi_comm, request(4), ierr)
+      call MPI_Waitall(4, request, MPI_STATUSES_IGNORE, ierr)
+ 
+      do j = 0, n2sub
+      do i = 0, n1sub
+          row              = (n1sub+1)*j + i
+          sgned_g(i, j, 0     ) = recvwest(row)
+          sgned_g(i, j, n3sub ) = recveast(row)
+      enddo
+      enddo
+ 
+      deallocate(sendeast, sendwest, recveast, recvwest)
+ 
+    end subroutine ghostcell_communication_sdf
+
+    !=========================================================================
+    ! Modified: get_signed_distance_function_global with narrowband optimization
+    !=========================================================================
     subroutine get_signed_distance_function_global
       implicit none
-
+ 
       integer                                              ::  solidnum, i, k, j, ierr
       character(len=80)                                    ::  solidnum2str, filestl
       double precision, dimension(0:n1sub,0:n2sub,0:n3sub) ::  sgned
+      logical, dimension(0:n1sub,0:n2sub,0:n3sub)          ::  band_mask
+      double precision                                     ::  bandwidth, dx_max
+      double precision                                     ::  t_band, t_sdf, t_sweep, t_tmp
 
       do solidnum = 1, nstlf
 
@@ -218,11 +693,51 @@ module mpi_cellclass
         
         call var_surf_make
         call read_stl(filestl)
-        call get_signed_distance_function_ANN(sgned)
-        ! !debug
-        ! call debug_save_cc(sgned)
-        ! !debug
-        ! call consensus_algorithm(sgned)
+        
+        ! Compute bandwidth from grid spacing
+        dx_max = 0.0d0
+        do i = 1, n1msub
+          dx_max = max(dx_max, dx1_sub(i))
+        enddo
+        do j = 1, n2msub
+          dx_max = max(dx_max, dx2_sub(j))
+        enddo
+        do k = 1, n3msub
+          dx_max = max(dx_max, dx3_sub(k))
+        enddo
+        bandwidth = dble(N_band) * dx_max
+ 
+        if(myrank == 0) then
+          write(*,'(A,F12.6,A,F12.6)') '  [Narrowband] dx_max = ', dx_max, ', bandwidth = ', bandwidth
+        endif
+ 
+        ! Phase 1: Find narrowband cells
+        t_tmp = MPI_Wtime()
+        call find_narrowband_cells(band_mask, bandwidth)
+        t_band = MPI_Wtime() - t_tmp
+
+         if(myrank == 0) then
+          write(*,'(A,F10.3,A)') '  [Timing] Narrowband detection: ', t_band, ' sec'
+        endif
+
+        ! Phase 2: Compute SDF in narrowband only
+        t_tmp = MPI_Wtime()
+        call compute_sdf_narrowband(sgned, band_mask)
+        t_sdf = MPI_Wtime() - t_tmp
+
+         if(myrank == 0) then
+          write(*,'(A,F10.3,A)') '  [Timing] SDF computation:      ', t_sdf, ' sec'
+        endif
+
+        ! Phase 3: Propagate sign to exterior cells
+        t_tmp = MPI_Wtime()
+        call propagate_sign_sweep(sgned, band_mask)
+        t_sweep = MPI_Wtime() - t_tmp
+ 
+        if(myrank == 0) then 
+          write(*,'(A,F10.3,A)') '  [Timing] Sign propagation:     ', t_sweep, ' sec'
+        endif
+ 
         call var_surf_clean
 
         do k=0,n3sub
@@ -238,254 +753,104 @@ module mpi_cellclass
 
     end subroutine get_signed_distance_function_global
 
+    !=========================================================================
+    ! Phase 5: Improved Heaviside function (SDF sign-based + smoothed option)
+    !=========================================================================
+
     subroutine get_heaviside_function
       implicit none
+      integer          :: i, j, k
+      double precision :: epsilon_h, dx_local
 
-      integer                                         :: i, j, K
-      ! double precision, allocatable, dimension(:,:,:) :: temp
-      double precision                                :: idsum
-
-      ! allocate( temp(0:n1sub,0:n2sub,0:n3sub) )
-      ! if(myrank==0) then
-      !     write(*,*) ' Heavyside Function G..'
-      ! endif 
-
-      ! temp(0       ,1:n2msub,1:n3msub) = sgned(1       ,1:n2msub,1:n3msub)
-      ! temp(n1msub+1,1:n2msub,1:n3msub) = sgned(n1msub  ,1:n2msub,1:n3msub)
-
-      ! temp(1:n1msub,0       ,1:n3msub) = sgned(1:n1msub,1       ,1:n3msub)
-      ! temp(1:n1msub,n2msub+1,1:n3msub) = sgned(1:n1msub,n2msub  ,1:n3msub)
-  
-      ! temp(1:n1msub,1:n2msub,0       ) = sgned(1:n1msub,1:n2msub,1       )
-      ! temp(1:n1msub,1:n2msub,n3msub+1) = sgned(1:n1msub,1:n2msub,n3msub  )
-
-
-      ! temp(0       ,0       ,1:n3msub) = sgned(1       ,1       ,1:n3msub)
-      ! temp(n1msub+1,0       ,1:n3msub) = sgned(n1msub  ,1       ,1:n3msub)
-      ! temp(0       ,n2msub+1,1:n3msub) = sgned(1       ,n2msub  ,1:n3msub)
-      ! temp(N1+1    ,N2+1    ,1:N3    ) = sgned(N1      ,N2      ,1:N3)
-
-      ! temp(0       ,1:n2msub,0       ) = sgned(1       ,1:n2msub,1       )
-      ! temp(n1msub+1,1:n2msub,0       ) = sgned(n1msub  ,1:n2msub,1       )
-      ! temp(0       ,1:n2msub,n3msub+1) = sgned(1       ,1:n2msub,n3msub  )
-      ! temp(n1msub+1,1:n2msub,n3msub+1) = sgned(n1msub  ,1:n2msub,n3msub  )
-
-      ! temp(1:n1msub,0       ,0       ) = sgned(1:n1msub,1       ,1       )
-      ! temp(1:n1msub,n2msub+1,0       ) = sgned(1:n1msub,n2msub  ,1       )
-      ! temp(1:n1msub,0       ,n3msub+1) = sgned(1:n1msub,1       ,n3msub  )
-      ! temp(1:n1msub,n2msub+1,n3msub+1) = sgned(1:n1msub,n2msub  ,n3msub  )
-
-
-      ! temp(0       ,0       ,0       ) = sgned(1       ,1       ,1       )
-      ! temp(n1msub+1,0       ,0       ) = sgned(n1msub  ,1       ,1       )
-      ! temp(0       ,n2msub+1,0       ) = sgned(1       ,n2msub  ,1       )
-      ! temp(0       ,0       ,n3msub+1) = sgned(1       ,1       ,n3msub  )
-  
-      ! temp(n1msub+1,n2msub+1,0       ) = sgned(n1msub  ,n2msub  ,1       )
-      ! temp(n1msub+1,0       ,n3msub+1) = sgned(n1msub  ,1       ,n3msub  )
-      ! temp(0       ,n2msub+1,n3msub+1) = sgned(1       ,n2msub  ,n3msub  )
-      ! temp(n1msub+1,n2msub+1,n3msub+1) = sgned(n1msub  ,n2msub  ,n3msub  )
-
-
-      do k=1,n3msub
-      do j=1,n2msub
-      do i=1,n1msub
-
-        idsum = &
-            & + sgned_g(i+1,j  ,k  ) + sgned_g(i-1,j  ,k  ) &
-            & + sgned_g(i  ,j+1,k  ) + sgned_g(i  ,j-1,k  ) &
-            & + sgned_g(i  ,j  ,k+1) + sgned_g(i  ,j  ,k-1) &
-            
-            & + sgned_g(i+1,j+1,k  ) + sgned_g(i-1,j+1,k  ) &
-            & + sgned_g(i+1,j-1,k  ) + sgned_g(i-1,j-1,k  ) &
-            & + sgned_g(i  ,j+1,k+1) + sgned_g(i  ,j-1,k+1) &
-            & + sgned_g(i  ,j+1,k-1) + sgned_g(i  ,j-1,k-1) &
-            & + sgned_g(i+1,j  ,k+1) + sgned_g(i-1,j  ,k+1) &
-            & + sgned_g(i+1,j  ,k-1) + sgned_g(i-1,j  ,k-1) &
-
-            & + sgned_g(i+1,j+1,k+1) + sgned_g(i-1,j+1,k+1) &
-            & + sgned_g(i+1,j-1,k+1) + sgned_g(i-1,j-1,k+1) &
-            & + sgned_g(i+1,j+1,k-1) + sgned_g(i-1,j+1,k-1) &
-            & + sgned_g(i+1,j-1,k-1) + sgned_g(i-1,j-1,k-1) 
-
-        if(idsum < 25.5) heavi_g(i,j,k) = 1.0d0
-
-      enddo
-      enddo
-      enddo
-
-      ! if(myrank==0) then
-      !     write(*,*) '=============================================='
-      ! endif
+      if(myrank==0) then
+          write(*,*) ' Computing Heaviside Function...'
+      endif
+      heavi_g = 0.0d0
+ 
+      if (use_smoothed_heaviside) then
+        ! Smoothed Heaviside function for better interface representation
+        do k = 1, n3msub
+        do j = 1, n2msub
+        do i = 1, n1msub
+          ! Local grid spacing for smoothing width
+          dx_local = max(dx1_sub(i), dx2_sub(j), dx3_sub(k))
+          epsilon_h = 1.5d0 * dx_local
+ 
+          if (sgned_g(i,j,k) > epsilon_h) then
+            heavi_g(i,j,k) = 1.0d0
+          elseif (sgned_g(i,j,k) < -epsilon_h) then
+            heavi_g(i,j,k) = 0.0d0
+          else
+            ! Smooth transition using sine function
+            heavi_g(i,j,k) = 0.5d0 * (1.0d0 + sgned_g(i,j,k)/epsilon_h &
+                             + sin(PI * sgned_g(i,j,k)/epsilon_h) / PI)
+          endif
+        enddo
+        enddo
+        enddo
+      else
+        ! Sharp Heaviside based on SDF sign
+        do k = 1, n3msub
+        do j = 1, n2msub
+        do i = 1, n1msub
+          if (sgned_g(i,j,k) > 0.0d0) then
+            heavi_g(i,j,k) = 1.0d0   ! Fluid
+          else
+            heavi_g(i,j,k) = 0.0d0   ! Solid
+          endif
+        enddo
+        enddo
+        enddo
+      endif
 
     end subroutine get_heaviside_function
 
-    ! subroutine ghostcell_communication
-    !   implicit none
-
-    !   integer                                       ::  i, j ,k
-
-    !   integer                                       ::  buffsize
-    !   integer                                       ::  row
-    !   double precision, allocatable, dimension(:)   ::  sendeast, sendwest
-    !   double precision, allocatable, dimension(:)   ::  recveast, recvwest
-
-    !   integer                                       ::  request(4)
-    !   integer                                       ::  ierr
-
-    !   ! X-direction
-    !   ! packing
-    !   buffsize = (n2sub+1)*(n3sub+1)
-    !   allocate(sendeast(0:buffsize), sendwest(0:buffsize))
-    !   allocate(recveast(0:buffsize), recvwest(0:buffsize))
-
-    !   do k = 0,n3sub
-    !   do j = 0,n2sub
-    !       row           = (n2sub+1)*k + j
-    !       sendeast(row) = sgned_g(n1msub,j,k)
-    !       sendwest(row) = sgned_g(     1,j,k)
-    !   enddo
-    !   enddo
-    !   !communication
-    !   call MPI_Isend(sendeast, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x1%east_rank, 111, comm_1d_x1%mpi_comm, request(1), ierr)
-    !   call MPI_Irecv(recvwest, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x1%west_rank, 111, comm_1d_x1%mpi_comm, request(2), ierr)
-    !   call MPI_Isend(sendwest, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x1%west_rank, 222, comm_1d_x1%mpi_comm, request(3), ierr)
-    !   call MPI_Irecv(recveast, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x1%east_rank, 222, comm_1d_x1%mpi_comm, request(4), ierr)
-    !   call MPI_Waitall(4, request, MPI_STATUSES_IGNORE, ierr)
-    !   !unpacking
-    !   do k = 0,n3sub
-    !   do j = 0,n2sub
-    !       row              = (n2sub+1)*k + j
-    !       sgned_g(    0,j,k) = recvwest(row)
-    !       sgned_g(n1sub,j,k) = recveast(row)
-    !   enddo
-    !   enddo
-
-    !   deallocate(sendeast, sendwest, recveast, recvwest)
-
-    !   ! Y-direction
-    !   ! packing
-    !   buffsize = (n1sub+1)*(n3sub+1)
-    !   allocate(sendeast(0:buffsize), sendwest(0:buffsize))
-    !   allocate(recveast(0:buffsize), recvwest(0:buffsize))
-
-    !   do k = 0,n3sub
-    !   do i = 0,n1sub
-    !       row           = (n1sub+1)*k + i
-    !       sendeast(row) = sgned_g(i,n2msub,k)
-    !       sendwest(row) = sgned_g(i,     1,k)
-    !   enddo
-    !   enddo
-    !   !communication
-    !   call MPI_Isend(sendeast, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x2%east_rank, 111, comm_1d_x2%mpi_comm, request(1), ierr)
-    !   call MPI_Irecv(recvwest, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x2%west_rank, 111, comm_1d_x2%mpi_comm, request(2), ierr)
-    !   call MPI_Isend(sendwest, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x2%west_rank, 222, comm_1d_x2%mpi_comm, request(3), ierr)
-    !   call MPI_Irecv(recveast, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x2%east_rank, 222, comm_1d_x2%mpi_comm, request(4), ierr)
-    !   call MPI_Waitall(4, request, MPI_STATUSES_IGNORE, ierr)
-    !   !unpacking
-    !   do k = 0,n3sub
-    !   do i = 0,n1sub
-    !       row              = (n1sub+1)*k + i
-    !       sgned_g(i,    0,k) = recvwest(row)
-    !       sgned_g(i,n2sub,k) = recveast(row)
-    !   enddo
-    !   enddo
-
-    !   deallocate(sendeast, sendwest, recveast, recvwest)
-      
-    !   ! Z-direction
-    !   ! packing
-    !   buffsize = (n1sub+1)*(n2sub+1)
-    !   allocate(sendeast(0:buffsize), sendwest(0:buffsize))
-    !   allocate(recveast(0:buffsize), recvwest(0:buffsize))
-
-    !   do j = 0,n2sub
-    !   do i = 0,n1sub
-    !       row           = (n1sub+1)*j + i
-    !       sendeast(row) = sgned_g(i,j,n3msub)
-    !       sendwest(row) = sgned_g(i,j,     1)
-    !   enddo
-    !   enddo
-    !   !communication
-    !   call MPI_Isend(sendeast, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x3%east_rank, 111, comm_1d_x3%mpi_comm, request(1), ierr)
-    !   call MPI_Irecv(recvwest, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x3%west_rank, 111, comm_1d_x3%mpi_comm, request(2), ierr)
-    !   call MPI_Isend(sendwest, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x3%west_rank, 222, comm_1d_x3%mpi_comm, request(3), ierr)
-    !   call MPI_Irecv(recveast, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x3%east_rank, 222, comm_1d_x3%mpi_comm, request(4), ierr)
-    !   call MPI_Waitall(4, request, MPI_STATUSES_IGNORE, ierr)
-    !   !unpacking
-    !   do j = 0,n2sub
-    !   do i = 0,n1sub
-    !       row              = (n1sub+1)*j + i
-    !       sgned_g(i,j,    0) = recvwest(row)
-    !       sgned_g(i,j,n3sub) = recveast(row)
-    !   enddo
-    !   enddo
-
-    !   deallocate(sendeast, sendwest, recveast, recvwest)
-
-    ! end subroutine ghostcell_communication
-
-    subroutine save_cc
-      implicit none
-      integer             ::  i, j, K
-      character(len=100)  ::  fileout
-
-      if(myrank==0) then
-          write(*,*) ' Writing outputs..'
-      endif
-
-      write(fileout, '(1A33,3(A1,I1),1A4)') 'output/result/SDF/out_signed_dist','_',&
-                                            comm_1d_x1%myrank,'_',comm_1d_x2%myrank,'_',comm_1d_x3%myrank,'.dat'
-
-      open(4,file=trim(fileout),action='write')
-          write(4,*) 'variables="X","Y","Z","Phi"'
-          write(4,*) 'zone i=',n1msub,', j=',n2msub,', k=',n3msub
-          do k=1,n3msub
-          do j=1,n2msub
-          do i=1,n1msub
-              write(4,*) x1_sub(i),x2_sub(j),x3_sub(k),sgned_g(i,j,k)
-          enddo
-          enddo
-          enddo
-      close(4)
-
-      write(fileout, '(1A25,3(A1,I1),1A4)') 'output/result/G/out_heavi','_',&
-                                            comm_1d_x1%myrank,'_',comm_1d_x2%myrank,'_',comm_1d_x3%myrank,'.dat'
-
-      open(5,file=trim(fileout),action='write')
-          write(5,*) 'variables="X","Y","Z","G"'
-          write(5,*) 'zone i=',n1msub,', j=',n2msub,', k=',n3msub
-          do k=1,n3msub
-          do j=1,n2msub
-          do i=1,n1msub
-              write(5,*) x1_sub(i),x2_sub(j),x3_sub(k),heavi_g(i,j,k)
-          enddo
-          enddo
-          enddo
-      close(5)
-
-      if(myrank==0) then
-          write(*,*) '=============================================='
-          write(*,*) ' Cell Classification is Done.'
-          write(*,*) '=============================================='
-      endif
-
-    end subroutine save_cc
+    !=========================================================================
+    ! Main cell classification driver (modified call sequence)
+    !=========================================================================
 
     subroutine cell_classification
       implicit none
 
-      double precision, dimension(0:n1sub,0:n2sub,0:n3sub)  ::  sgned
+      double precision :: t_total, t_sdf, t_ghost, t_heavi, t_tmp
+      integer :: ierr
+      t_total = MPI_Wtime()
+ 
       call var_cc_make
-
-
+ 
+      ! SDF computation with narrowband optimization
+      t_tmp = MPI_Wtime()
       call get_signed_distance_function_global
+      t_sdf = MPI_Wtime() - t_tmp
+ 
+      ! Phase 4: Ghost cell communication
+      t_tmp = MPI_Wtime()
+      call ghostcell_communication_sdf
+      t_ghost = MPI_Wtime() - t_tmp
+ 
+      ! Phase 5: Heaviside function
+      t_tmp = MPI_Wtime()
       call get_heaviside_function
+      t_heavi = MPI_Wtime() - t_tmp
+ 
       call save_cc
-
+ 
+      if(myrank == 0) then
+        write(*,*) '=============================================='
+        write(*,'(A,F10.3,A)') ' [Total] SDF computation:      ', t_sdf, ' sec'
+        write(*,'(A,F10.3,A)') ' [Total] Ghost cell comm:      ', t_ghost, ' sec'
+        write(*,'(A,F10.3,A)') ' [Total] Heaviside function:   ', t_heavi, ' sec'
+        write(*,'(A,F10.3,A)') ' [Total] Cell classification:  ', MPI_Wtime() - t_total, ' sec'
+        write(*,*) '=============================================='
+      endif
+ 
       call var_cc_clean
-
+ 
     end subroutine cell_classification
+ 
+    !=========================================================================
+    ! Original SDF computation (kept for reference/validation)
+    !=========================================================================
 
     subroutine get_signed_distance_function_ANN(sgned)
       implicit none
@@ -510,7 +875,6 @@ module mpi_cellclass
       pty(:) = vert(:)%xyz(2)
       ptz(:) = vert(:)%xyz(3)
       call wldst_create_tree(ptx(1), pty(1), ptz(1), para%nvert)
-      ! call wldst_create_tree(vert(1)%xyz(1), vert(1)%xyz(2), vert(1)%xyz(3), para%nvert)
 
       do k = 0,n3sub
       do j = 0,n2sub
@@ -829,7 +1193,53 @@ module mpi_cellclass
       endif
 
     end subroutine edge_mdpt
-
+    subroutine save_cc
+      implicit none
+      integer             ::  i, j, K
+      character(len=100)  ::  fileout
+ 
+      if(myrank==0) then
+          write(*,*) ' Writing outputs..'
+      endif
+ 
+      write(fileout, '(1A33,3(A1,I1),1A4)') 'output/result/SDF/out_signed_dist','_',&
+                                            comm_1d_x1%myrank,'_',comm_1d_x2%myrank,'_',comm_1d_x3%myrank,'.dat'
+ 
+      open(4,file=trim(fileout),action='write')
+          write(4,*) 'variables="X","Y","Z","Phi"'
+          write(4,*) 'zone i=',n1msub,', j=',n2msub,', k=',n3msub
+          do k=1,n3msub
+          do j=1,n2msub
+          do i=1,n1msub
+              write(4,*) x1_sub(i),x2_sub(j),x3_sub(k),sgned_g(i,j,k)
+          enddo
+          enddo
+          enddo
+      close(4)
+ 
+      write(fileout, '(1A25,3(A1,I1),1A4)') 'output/result/G/out_heavi','_',&
+                                            comm_1d_x1%myrank,'_',comm_1d_x2%myrank,'_',comm_1d_x3%myrank,'.dat'
+ 
+      open(5,file=trim(fileout),action='write')
+          write(5,*) 'variables="X","Y","Z","G"'
+          write(5,*) 'zone i=',n1msub,', j=',n2msub,', k=',n3msub
+          do k=1,n3msub
+          do j=1,n2msub
+          do i=1,n1msub
+              write(5,*) x1_sub(i),x2_sub(j),x3_sub(k),heavi_g(i,j,k)
+          enddo
+          enddo
+          enddo
+      close(5)
+ 
+      if(myrank==0) then
+          write(*,*) '=============================================='
+          write(*,*) ' Cell Classification is Done.'
+          write(*,*) '=============================================='
+      endif
+ 
+    end subroutine save_cc
+ 
     subroutine consensus_algorithm(sgned)
       implicit none
 

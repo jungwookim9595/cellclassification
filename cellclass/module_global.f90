@@ -25,6 +25,10 @@ module global
     implicit none
     double precision, parameter :: PI = acos(-1.d0)
 
+    ! Narrowband parameters for SDF optimization
+    integer, parameter :: N_band = 5           ! Number of grid spacings for narrowband width
+    logical, parameter :: use_smoothed_heaviside = .true.  ! Use smoothed Heaviside at interface
+ 
     ! Physical parameters
     double precision :: Pr, Ra, Gr
     double precision :: Cmu, Cmt, Ct, Cmp

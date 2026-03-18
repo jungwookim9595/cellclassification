@@ -33,7 +33,7 @@ program main
     implicit none
 
     integer :: ierr
-    
+    double precision :: t_start, t_end
     call MPI_Init(ierr)
     call MPI_Comm_size( MPI_COMM_WORLD, nprocs, ierr)
     call MPI_Comm_rank( MPI_COMM_WORLD, myrank, ierr)
@@ -51,7 +51,13 @@ program main
 
     call MPI_Barrier(MPI_COMM_WORLD,ierr)
 
-    call cell_classification    
+    t_start = MPI_Wtime()
+    call cell_classification
+    t_end = MPI_Wtime()
+ 
+    if(myrank==0) then
+      write(*,'(A,F10.3,A)') '[Main] Total wall time: ', t_end - t_start, ' sec'
+    endif
 
     call mpi_subdomain_indices_clean()
     call mpi_subdomain_clean()
