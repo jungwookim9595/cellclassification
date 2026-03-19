@@ -61,7 +61,8 @@ contains
 
       allocate( sgned_g(0:n1sub,0:n2sub,0:n3sub), heavi_g(0:n1sub,0:n2sub,0:n3sub) )
 
-      sgned_g = 999.0
+      sgned_g = 999.0d0
+      heavi_g = 0.0d0
    end subroutine var_cc_make
 
    subroutine var_cc_clean
@@ -242,188 +243,181 @@ contains
       implicit none
 
       integer                                         :: i, j, K
-      ! double precision, allocatable, dimension(:,:,:) :: temp
-      double precision                                :: idsum
+      logical :: has_negative_neighbor
 
-      ! allocate( temp(0:n1sub,0:n2sub,0:n3sub) )
-      ! if(myrank==0) then
-      !     write(*,*) ' Heavyside Function G..'
-      ! endif
+      if(myrank==0) then
+         write(*,*) ' Computing Heaviside Function...'
+      endif
 
-      ! temp(0       ,1:n2msub,1:n3msub) = sgned(1       ,1:n2msub,1:n3msub)
-      ! temp(n1msub+1,1:n2msub,1:n3msub) = sgned(n1msub  ,1:n2msub,1:n3msub)
-
-      ! temp(1:n1msub,0       ,1:n3msub) = sgned(1:n1msub,1       ,1:n3msub)
-      ! temp(1:n1msub,n2msub+1,1:n3msub) = sgned(1:n1msub,n2msub  ,1:n3msub)
-
-      ! temp(1:n1msub,1:n2msub,0       ) = sgned(1:n1msub,1:n2msub,1       )
-      ! temp(1:n1msub,1:n2msub,n3msub+1) = sgned(1:n1msub,1:n2msub,n3msub  )
-
-
-      ! temp(0       ,0       ,1:n3msub) = sgned(1       ,1       ,1:n3msub)
-      ! temp(n1msub+1,0       ,1:n3msub) = sgned(n1msub  ,1       ,1:n3msub)
-      ! temp(0       ,n2msub+1,1:n3msub) = sgned(1       ,n2msub  ,1:n3msub)
-      ! temp(N1+1    ,N2+1    ,1:N3    ) = sgned(N1      ,N2      ,1:N3)
-
-      ! temp(0       ,1:n2msub,0       ) = sgned(1       ,1:n2msub,1       )
-      ! temp(n1msub+1,1:n2msub,0       ) = sgned(n1msub  ,1:n2msub,1       )
-      ! temp(0       ,1:n2msub,n3msub+1) = sgned(1       ,1:n2msub,n3msub  )
-      ! temp(n1msub+1,1:n2msub,n3msub+1) = sgned(n1msub  ,1:n2msub,n3msub  )
-
-      ! temp(1:n1msub,0       ,0       ) = sgned(1:n1msub,1       ,1       )
-      ! temp(1:n1msub,n2msub+1,0       ) = sgned(1:n1msub,n2msub  ,1       )
-      ! temp(1:n1msub,0       ,n3msub+1) = sgned(1:n1msub,1       ,n3msub  )
-      ! temp(1:n1msub,n2msub+1,n3msub+1) = sgned(1:n1msub,n2msub  ,n3msub  )
-
-
-      ! temp(0       ,0       ,0       ) = sgned(1       ,1       ,1       )
-      ! temp(n1msub+1,0       ,0       ) = sgned(n1msub  ,1       ,1       )
-      ! temp(0       ,n2msub+1,0       ) = sgned(1       ,n2msub  ,1       )
-      ! temp(0       ,0       ,n3msub+1) = sgned(1       ,1       ,n3msub  )
-
-      ! temp(n1msub+1,n2msub+1,0       ) = sgned(n1msub  ,n2msub  ,1       )
-      ! temp(n1msub+1,0       ,n3msub+1) = sgned(n1msub  ,1       ,n3msub  )
-      ! temp(0       ,n2msub+1,n3msub+1) = sgned(1       ,n2msub  ,n3msub  )
-      ! temp(n1msub+1,n2msub+1,n3msub+1) = sgned(n1msub  ,n2msub  ,n3msub  )
-
-
-      do k=1,n3msub
-         do j=1,n2msub
-            do i=1,n1msub
-
-               idsum = &
-               & + sgned_g(i+1,j  ,k  ) + sgned_g(i-1,j  ,k  ) &
-               & + sgned_g(i  ,j+1,k  ) + sgned_g(i  ,j-1,k  ) &
-               & + sgned_g(i  ,j  ,k+1) + sgned_g(i  ,j  ,k-1) &
-
-               & + sgned_g(i+1,j+1,k  ) + sgned_g(i-1,j+1,k  ) &
-               & + sgned_g(i+1,j-1,k  ) + sgned_g(i-1,j-1,k  ) &
-               & + sgned_g(i  ,j+1,k+1) + sgned_g(i  ,j-1,k+1) &
-               & + sgned_g(i  ,j+1,k-1) + sgned_g(i  ,j-1,k-1) &
-               & + sgned_g(i+1,j  ,k+1) + sgned_g(i-1,j  ,k+1) &
-               & + sgned_g(i+1,j  ,k-1) + sgned_g(i-1,j  ,k-1) &
-
-               & + sgned_g(i+1,j+1,k+1) + sgned_g(i-1,j+1,k+1) &
-               & + sgned_g(i+1,j-1,k+1) + sgned_g(i-1,j-1,k+1) &
-               & + sgned_g(i+1,j+1,k-1) + sgned_g(i-1,j+1,k-1) &
-               & + sgned_g(i+1,j-1,k-1) + sgned_g(i-1,j-1,k-1)
-
-               if(idsum < 25.5) heavi_g(i,j,k) = 1.0d0
-
-            enddo
-         enddo
+      heavi_g = 0.0d0
+ 
+      do k = 1, n3msub
+        do j = 1, n2msub
+           do i = 1, n1msub
+              ! ----------------------------------------------------------
+              ! Step 3: Interior — Eq.(12)
+              ! "If Phi(x_k, t) <= 0, then G is also set to 1."
+              ! ----------------------------------------------------------
+              if (sgned_g(i,j,k) .LE. 0.0d0) then
+                 heavi_g(i,j,k) = 1.0d0
+ 
+              ! ----------------------------------------------------------
+              ! Step 2: Band — Eq.(11)
+              ! "if Phi(x_k, t) > 0 and if any Phi(x_k', t) < 0,
+              !  where x_k' is a nearest neighbor of x_k,
+              !  then G is set to 1."
+              ! 26 neighbors (6 face + 12 edge + 8 corner)
+              ! ----------------------------------------------------------
+              else
+                 has_negative_neighbor = .false.
+ 
+                 ! --- 6 face neighbors ---
+                 if (sgned_g(i-1,j  ,k  ) .LT. 0.0d0) has_negative_neighbor = .true.
+                 if (sgned_g(i+1,j  ,k  ) .LT. 0.0d0) has_negative_neighbor = .true.
+                 if (sgned_g(i  ,j-1,k  ) .LT. 0.0d0) has_negative_neighbor = .true.
+                 if (sgned_g(i  ,j+1,k  ) .LT. 0.0d0) has_negative_neighbor = .true.
+                 if (sgned_g(i  ,j  ,k-1) .LT. 0.0d0) has_negative_neighbor = .true.
+                 if (sgned_g(i  ,j  ,k+1) .LT. 0.0d0) has_negative_neighbor = .true.
+ 
+                 ! --- 12 edge neighbors ---
+                 if (sgned_g(i-1,j-1,k  ) .LT. 0.0d0) has_negative_neighbor = .true.
+                 if (sgned_g(i-1,j+1,k  ) .LT. 0.0d0) has_negative_neighbor = .true.
+                 if (sgned_g(i+1,j-1,k  ) .LT. 0.0d0) has_negative_neighbor = .true.
+                 if (sgned_g(i+1,j+1,k  ) .LT. 0.0d0) has_negative_neighbor = .true.
+                 if (sgned_g(i-1,j  ,k-1) .LT. 0.0d0) has_negative_neighbor = .true.
+                 if (sgned_g(i-1,j  ,k+1) .LT. 0.0d0) has_negative_neighbor = .true.
+                 if (sgned_g(i+1,j  ,k-1) .LT. 0.0d0) has_negative_neighbor = .true.
+                 if (sgned_g(i+1,j  ,k+1) .LT. 0.0d0) has_negative_neighbor = .true.
+                 if (sgned_g(i  ,j-1,k-1) .LT. 0.0d0) has_negative_neighbor = .true.
+                 if (sgned_g(i  ,j-1,k+1) .LT. 0.0d0) has_negative_neighbor = .true.
+                 if (sgned_g(i  ,j+1,k-1) .LT. 0.0d0) has_negative_neighbor = .true.
+                 if (sgned_g(i  ,j+1,k+1) .LT. 0.0d0) has_negative_neighbor = .true.
+ 
+                 ! --- 8 corner neighbors ---
+                 if (sgned_g(i-1,j-1,k-1) .LT. 0.0d0) has_negative_neighbor = .true.
+                 if (sgned_g(i-1,j-1,k+1) .LT. 0.0d0) has_negative_neighbor = .true.
+                 if (sgned_g(i-1,j+1,k-1) .LT. 0.0d0) has_negative_neighbor = .true.
+                 if (sgned_g(i-1,j+1,k+1) .LT. 0.0d0) has_negative_neighbor = .true.
+                 if (sgned_g(i+1,j-1,k-1) .LT. 0.0d0) has_negative_neighbor = .true.
+                 if (sgned_g(i+1,j-1,k+1) .LT. 0.0d0) has_negative_neighbor = .true.
+                 if (sgned_g(i+1,j+1,k-1) .LT. 0.0d0) has_negative_neighbor = .true.
+                 if (sgned_g(i+1,j+1,k+1) .LT. 0.0d0) has_negative_neighbor = .true.
+ 
+                 if (has_negative_neighbor) then
+                    heavi_g(i,j,k) = 1.0d0
+                 endif
+                 ! else: remains 0.0 -> Field point
+              endif
+           enddo
+        enddo
       enddo
 
-      ! if(myrank==0) then
-      !     write(*,*) '=============================================='
-      ! endif
+      if(myrank==0) then
+         write(*,*) '=============================================='
+      endif
 
    end subroutine get_heaviside_function
+ 
+   subroutine ghostcell_communication
+      implicit none
 
-   ! subroutine ghostcell_communication
-   !   implicit none
+      integer                                       ::  i, j ,k
+      integer                                       ::  buffsize
+      integer                                       ::  row
+      double precision, allocatable, dimension(:)   ::  sendeast, sendwest
+      double precision, allocatable, dimension(:)   ::  recveast, recvwest
+      integer                                       ::  request(4)
+      integer                                       ::  ierr
 
-   !   integer                                       ::  i, j ,k
+      ! X-direction
+      buffsize = (n2sub+1)*(n3sub+1)
+      allocate(sendeast(0:buffsize), sendwest(0:buffsize))
+      allocate(recveast(0:buffsize), recvwest(0:buffsize))
 
-   !   integer                                       ::  buffsize
-   !   integer                                       ::  row
-   !   double precision, allocatable, dimension(:)   ::  sendeast, sendwest
-   !   double precision, allocatable, dimension(:)   ::  recveast, recvwest
+      do k = 0,n3sub
+      do j = 0,n2sub
+          row           = (n2sub+1)*k + j
+          sendeast(row) = sgned_g(n1msub,j,k)
+          sendwest(row) = sgned_g(     1,j,k)
+      enddo
+      enddo
 
-   !   integer                                       ::  request(4)
-   !   integer                                       ::  ierr
 
-   !   ! X-direction
-   !   ! packing
-   !   buffsize = (n2sub+1)*(n3sub+1)
-   !   allocate(sendeast(0:buffsize), sendwest(0:buffsize))
-   !   allocate(recveast(0:buffsize), recvwest(0:buffsize))
+      call MPI_Isend(sendeast, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x1%east_rank, 111, comm_1d_x1%mpi_comm, request(1), ierr)
+      call MPI_Irecv(recvwest, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x1%west_rank, 111, comm_1d_x1%mpi_comm, request(2), ierr)
+      call MPI_Isend(sendwest, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x1%west_rank, 222, comm_1d_x1%mpi_comm, request(3), ierr)
+      call MPI_Irecv(recveast, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x1%east_rank, 222, comm_1d_x1%mpi_comm, request(4), ierr)
+      call MPI_Waitall(4, request, MPI_STATUSES_IGNORE, ierr)
 
-   !   do k = 0,n3sub
-   !   do j = 0,n2sub
-   !       row           = (n2sub+1)*k + j
-   !       sendeast(row) = sgned_g(n1msub,j,k)
-   !       sendwest(row) = sgned_g(     1,j,k)
-   !   enddo
-   !   enddo
-   !   !communication
-   !   call MPI_Isend(sendeast, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x1%east_rank, 111, comm_1d_x1%mpi_comm, request(1), ierr)
-   !   call MPI_Irecv(recvwest, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x1%west_rank, 111, comm_1d_x1%mpi_comm, request(2), ierr)
-   !   call MPI_Isend(sendwest, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x1%west_rank, 222, comm_1d_x1%mpi_comm, request(3), ierr)
-   !   call MPI_Irecv(recveast, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x1%east_rank, 222, comm_1d_x1%mpi_comm, request(4), ierr)
-   !   call MPI_Waitall(4, request, MPI_STATUSES_IGNORE, ierr)
-   !   !unpacking
-   !   do k = 0,n3sub
-   !   do j = 0,n2sub
-   !       row              = (n2sub+1)*k + j
-   !       sgned_g(    0,j,k) = recvwest(row)
-   !       sgned_g(n1sub,j,k) = recveast(row)
-   !   enddo
-   !   enddo
+      do k = 0,n3sub
+      do j = 0,n2sub
+          row              = (n2sub+1)*k + j
+          sgned_g(    0,j,k) = recvwest(row)
+          sgned_g(n1sub,j,k) = recveast(row)
+      enddo
+      enddo
 
-   !   deallocate(sendeast, sendwest, recveast, recvwest)
+      deallocate(sendeast, sendwest, recveast, recvwest)
+ 
+      ! Y-direction
+      buffsize = (n1sub+1)*(n3sub+1)
+      allocate(sendeast(0:buffsize), sendwest(0:buffsize))
+      allocate(recveast(0:buffsize), recvwest(0:buffsize))
 
-   !   ! Y-direction
-   !   ! packing
-   !   buffsize = (n1sub+1)*(n3sub+1)
-   !   allocate(sendeast(0:buffsize), sendwest(0:buffsize))
-   !   allocate(recveast(0:buffsize), recvwest(0:buffsize))
+      do k = 0,n3sub
+      do i = 0,n1sub
+          row           = (n1sub+1)*k + i
+          sendeast(row) = sgned_g(i,n2msub,k)
+          sendwest(row) = sgned_g(i,     1,k)
+      enddo
+      enddo
 
-   !   do k = 0,n3sub
-   !   do i = 0,n1sub
-   !       row           = (n1sub+1)*k + i
-   !       sendeast(row) = sgned_g(i,n2msub,k)
-   !       sendwest(row) = sgned_g(i,     1,k)
-   !   enddo
-   !   enddo
-   !   !communication
-   !   call MPI_Isend(sendeast, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x2%east_rank, 111, comm_1d_x2%mpi_comm, request(1), ierr)
-   !   call MPI_Irecv(recvwest, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x2%west_rank, 111, comm_1d_x2%mpi_comm, request(2), ierr)
-   !   call MPI_Isend(sendwest, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x2%west_rank, 222, comm_1d_x2%mpi_comm, request(3), ierr)
-   !   call MPI_Irecv(recveast, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x2%east_rank, 222, comm_1d_x2%mpi_comm, request(4), ierr)
-   !   call MPI_Waitall(4, request, MPI_STATUSES_IGNORE, ierr)
-   !   !unpacking
-   !   do k = 0,n3sub
-   !   do i = 0,n1sub
-   !       row              = (n1sub+1)*k + i
-   !       sgned_g(i,    0,k) = recvwest(row)
-   !       sgned_g(i,n2sub,k) = recveast(row)
-   !   enddo
-   !   enddo
+      call MPI_Isend(sendeast, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x2%east_rank, 333, comm_1d_x2%mpi_comm, request(1), ierr)
+      call MPI_Irecv(recvwest, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x2%west_rank, 333, comm_1d_x2%mpi_comm, request(2), ierr)
+      call MPI_Isend(sendwest, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x2%west_rank, 444, comm_1d_x2%mpi_comm, request(3), ierr)
+      call MPI_Irecv(recveast, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x2%east_rank, 444, comm_1d_x2%mpi_comm, request(4), ierr)
+      call MPI_Waitall(4, request, MPI_STATUSES_IGNORE, ierr)
 
-   !   deallocate(sendeast, sendwest, recveast, recvwest)
+      do k = 0,n3sub
+      do i = 0,n1sub
+          row              = (n1sub+1)*k + i
+          sgned_g(i,    0,k) = recvwest(row)
+          sgned_g(i,n2sub,k) = recveast(row)
+      enddo
+      enddo
+      
+      deallocate(sendeast, sendwest, recveast, recvwest)
 
-   !   ! Z-direction
-   !   ! packing
-   !   buffsize = (n1sub+1)*(n2sub+1)
-   !   allocate(sendeast(0:buffsize), sendwest(0:buffsize))
-   !   allocate(recveast(0:buffsize), recvwest(0:buffsize))
+      ! Z-direction
+      buffsize = (n1sub+1)*(n2sub+1)
+      allocate(sendeast(0:buffsize), sendwest(0:buffsize))
+      allocate(recveast(0:buffsize), recvwest(0:buffsize))
+      
+      do j = 0,n2sub
+      do i = 0,n1sub
+          row           = (n1sub+1)*j + i
+          sendeast(row) = sgned_g(i,j,n3msub)
+          sendwest(row) = sgned_g(i,j,     1)
+      enddo
+      enddo
 
-   !   do j = 0,n2sub
-   !   do i = 0,n1sub
-   !       row           = (n1sub+1)*j + i
-   !       sendeast(row) = sgned_g(i,j,n3msub)
-   !       sendwest(row) = sgned_g(i,j,     1)
-   !   enddo
-   !   enddo
-   !   !communication
-   !   call MPI_Isend(sendeast, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x3%east_rank, 111, comm_1d_x3%mpi_comm, request(1), ierr)
-   !   call MPI_Irecv(recvwest, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x3%west_rank, 111, comm_1d_x3%mpi_comm, request(2), ierr)
-   !   call MPI_Isend(sendwest, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x3%west_rank, 222, comm_1d_x3%mpi_comm, request(3), ierr)
-   !   call MPI_Irecv(recveast, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x3%east_rank, 222, comm_1d_x3%mpi_comm, request(4), ierr)
-   !   call MPI_Waitall(4, request, MPI_STATUSES_IGNORE, ierr)
-   !   !unpacking
-   !   do j = 0,n2sub
-   !   do i = 0,n1sub
-   !       row              = (n1sub+1)*j + i
-   !       sgned_g(i,j,    0) = recvwest(row)
-   !       sgned_g(i,j,n3sub) = recveast(row)
-   !   enddo
-   !   enddo
+      call MPI_Isend(sendeast, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x3%east_rank, 555, comm_1d_x3%mpi_comm, request(1), ierr)
+      call MPI_Irecv(recvwest, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x3%west_rank, 555, comm_1d_x3%mpi_comm, request(2), ierr)
+      call MPI_Isend(sendwest, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x3%west_rank, 666, comm_1d_x3%mpi_comm, request(3), ierr)
+      call MPI_Irecv(recveast, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x3%east_rank, 666, comm_1d_x3%mpi_comm, request(4), ierr)
+      call MPI_Waitall(4, request, MPI_STATUSES_IGNORE, ierr)
+ 
+      do j = 0,n2sub
+      do i = 0,n1sub
+          row              = (n1sub+1)*j + i
+          sgned_g(i,j,    0) = recvwest(row)
+          sgned_g(i,j,n3sub) = recveast(row)
+      enddo
+      enddo
 
-   !   deallocate(sendeast, sendwest, recveast, recvwest)
-
-   ! end subroutine ghostcell_communication
+      deallocate(sendeast, sendwest, recveast, recvwest)
+      
+   end subroutine ghostcell_communication
 
    subroutine save_cc
       implicit none
@@ -480,6 +474,7 @@ contains
 
 
       call get_signed_distance_function_global
+      call ghostcell_communication
       call get_heaviside_function
       call save_cc
 
