@@ -2,7 +2,8 @@ gensurf/STL
 gensurf/devidedsolid
 gensurf/output
 cellclass/output
-cellcalss/cellclass.exe
-cellclass/cellclass.mod
+*.exe
 gensurf/*.stl
-gensurf/gensurf.mod
+*.mod
+*.o
+gensurf/main
