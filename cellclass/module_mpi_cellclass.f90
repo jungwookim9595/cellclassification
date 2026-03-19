@@ -615,56 +615,96 @@ contains
 
       ! Local variables
       double precision, dimension(3)                  ::  p1, p2, p3
-      double precision                                ::  alpha, beta, gamma, delta, dist1, dist2, dist3
-      double precision, parameter                     ::  dbl_epsilon = EPSILON(1.0d0)
+      double precision                                ::  alpha, beta, gamma, delta
+      double precision                                ::  dot_val, dist_tmp
+      double precision, dimension(3)                  ::  edge_clst_pt, edge_clst_norm
 
       p1(:) = vert(elem(indx)%vert(1))%xyz(:)
       p2(:) = vert(elem(indx)%vert(2))%xyz(:)
       p3(:) = vert(elem(indx)%vert(3))%xyz(:)
 
+      ! [Fix #5] Signed area ratio
       call get_ratio_of_area(p1, p2, p3, qp, elem(indx)%norm, alpha, beta, gamma)
 
-      if(abs(alpha+beta+gamma-1.0d0).LT.dbl_epsilon) then
-         distance = (qp(1)-elem(indx)%xyz(1))*elem(indx)%norm(1) &
-         &         +(qp(2)-elem(indx)%xyz(2))*elem(indx)%norm(2) &
-         &         +(qp(3)-elem(indx)%xyz(3))*elem(indx)%norm(3)
-         distance = sqrt(distance)
+      ! [Fix #5] Check individual barycentric coordinates instead of sum
+      if (alpha .GE. 0.0d0 .AND. beta .GE. 0.0d0 .AND. gamma .GE. 0.0d0) then
 
-         clst_pt(:)   = elem(indx)%xyz(:)
+         ! ===== Face interior =====
+         ! [Fix #1] distance = |n . (qp - p1)| (not sqrt of dot product)
+         dot_val = (qp(1)-p1(1))*elem(indx)%norm(1) &
+         &        +(qp(2)-p1(2))*elem(indx)%norm(2) &
+         &        +(qp(3)-p1(3))*elem(indx)%norm(3)
+         distance = abs(dot_val)
+
+         ! [Fix #2] Closest point = plane projection (not centroid)
+         clst_pt(1) = qp(1) - dot_val * elem(indx)%norm(1)
+         clst_pt(2) = qp(2) - dot_val * elem(indx)%norm(2)
+         clst_pt(3) = qp(3) - dot_val * elem(indx)%norm(3)
          clst_norm(:) = elem(indx)%norm(:)
+
       else
+         ! ===== Face exterior: check all edges and vertices for minimum =====
+         distance = huge(1.0d0)
+
+         ! --- Edge P1-P2 ---
          call get_delta(p1, p2, qp, delta)
-         if(delta.GT.0.0d0.AND.delta.LT.1.0d0) then
-            call edge_dist(p1, p2, qp, distance)
-            call edge_mdpt(elem(indx)%vert(1), elem(indx)%vert(2), elem(indx)%edge, clst_pt, clst_norm)
-         else
-            call get_delta(p2, p3, qp, delta)
-            if(delta.GT.0.0d0.AND.delta.LT.1.0d0) then
-               call edge_dist(p2, p3, qp, distance)
-               call edge_mdpt(elem(indx)%vert(2), elem(indx)%vert(3), elem(indx)%edge, clst_pt, clst_norm)
-            else
-               call get_delta(p3, p1, qp, delta)
-               if(delta.GT.0.0d0.AND.delta.LT.1.0d0) then
-                  call edge_dist(p3, p1, qp, distance)
-                  call edge_mdpt(elem(indx)%vert(3), elem(indx)%vert(2), elem(indx)%edge, clst_pt, clst_norm)
-               else
-                  dist1 = sqrt( (qp(1)-p1(1))**2 + (qp(2)-p1(2))**2 + (qp(3)-p1(3))**2 )
-                  dist2 = sqrt( (qp(1)-p2(1))**2 + (qp(2)-p2(2))**2 + (qp(3)-p2(3))**2 )
-                  dist3 = sqrt( (qp(1)-p3(1))**2 + (qp(2)-p3(2))**2 + (qp(3)-p3(3))**2 )
-                  distance = min(dist1, dist2, dist3)
-                  if(distance.EQ.dist1) then
-                     clst_pt(:)  = p1(:)
-                     clst_norm(:)= vert(elem(indx)%vert(1))%norm(:)
-                  elseif(distance.EQ.dist2) then
-                     clst_pt(:)  = p2(:)
-                     clst_norm(:)= vert(elem(indx)%vert(2))%norm(:)
-                  elseif(distance.EQ.dist3) then
-                     clst_pt(:)  = p3(:)
-                     clst_norm(:)= vert(elem(indx)%vert(3))%norm(:)
-                  endif
-               endif
+         if (delta .GT. 0.0d0 .AND. delta .LT. 1.0d0) then
+            call edge_dist(p1, p2, qp, dist_tmp)
+            if (dist_tmp .LT. distance) then
+               distance = dist_tmp
+               ! [Fix #4] Closest point = actual projection on edge
+               clst_pt(:) = p1(:) + delta * (p2(:) - p1(:))
+               call edge_mdpt(elem(indx)%vert(1), elem(indx)%vert(2), &
+                              elem(indx)%edge, edge_clst_pt, clst_norm)
             endif
          endif
+
+         ! --- Edge P2-P3 ---
+         call get_delta(p2, p3, qp, delta)
+         if (delta .GT. 0.0d0 .AND. delta .LT. 1.0d0) then
+            call edge_dist(p2, p3, qp, dist_tmp)
+            if (dist_tmp .LT. distance) then
+               distance = dist_tmp
+               clst_pt(:) = p2(:) + delta * (p3(:) - p2(:))
+               call edge_mdpt(elem(indx)%vert(2), elem(indx)%vert(3), &
+                              elem(indx)%edge, edge_clst_pt, clst_norm)
+            endif
+         endif
+
+         ! --- Edge P3-P1 ---
+         call get_delta(p3, p1, qp, delta)
+         if (delta .GT. 0.0d0 .AND. delta .LT. 1.0d0) then
+            call edge_dist(p3, p1, qp, dist_tmp)
+            if (dist_tmp .LT. distance) then
+               distance = dist_tmp
+               clst_pt(:) = p3(:) + delta * (p1(:) - p3(:))
+               call edge_mdpt(elem(indx)%vert(3), elem(indx)%vert(1), &
+                              elem(indx)%edge, edge_clst_pt, clst_norm)
+            endif
+         endif
+
+         ! --- Vertex fallback: check all three vertices ---
+         dist_tmp = sqrt( (qp(1)-p1(1))**2 + (qp(2)-p1(2))**2 + (qp(3)-p1(3))**2 )
+         if (dist_tmp .LT. distance) then
+            distance = dist_tmp
+            clst_pt(:)   = p1(:)
+            clst_norm(:) = vert(elem(indx)%vert(1))%norm(:)
+         endif
+
+         dist_tmp = sqrt( (qp(1)-p2(1))**2 + (qp(2)-p2(2))**2 + (qp(3)-p2(3))**2 )
+         if (dist_tmp .LT. distance) then
+            distance = dist_tmp
+            clst_pt(:)   = p2(:)
+            clst_norm(:) = vert(elem(indx)%vert(2))%norm(:)
+         endif
+
+         dist_tmp = sqrt( (qp(1)-p3(1))**2 + (qp(2)-p3(2))**2 + (qp(3)-p3(3))**2 )
+         if (dist_tmp .LT. distance) then
+            distance = dist_tmp
+            clst_pt(:)   = p3(:)
+            clst_norm(:) = vert(elem(indx)%vert(3))%norm(:)
+         endif
+
       endif
    end subroutine triangle_distance
 
@@ -675,64 +715,47 @@ contains
       double precision                                ::  alpha, beta, gamma
 
       ! Local variables
-      double precision, dimension(3)                  ::  vec1, vec2, q
-      double precision                                ::  cpn1, cpn2
+      double precision, dimension(3)                  ::  vec1, vec2, cross_vec, q
+      double precision                                ::  dot_proj, total_area, sub_area
 
-      ! cal q
-      q(1) = qp(1) - ( (norm(1)*(qp(1)-p1(1))) + (norm(2)*(qp(2)-p1(2))) + (norm(3)*(qp(3)-p1(3))) )*norm(1)
-      q(2) = qp(2) - ( (norm(1)*(qp(1)-p1(1))) + (norm(2)*(qp(2)-p1(2))) + (norm(3)*(qp(3)-p1(3))) )*norm(2)
-      q(3) = qp(3) - ( (norm(1)*(qp(1)-p1(1))) + (norm(2)*(qp(2)-p1(2))) + (norm(3)*(qp(3)-p1(3))) )*norm(3)
+      ! Project qp onto triangle plane
+      dot_proj = norm(1)*(qp(1)-p1(1)) + norm(2)*(qp(2)-p1(2)) + norm(3)*(qp(3)-p1(3))
+      q(:) = qp(:) - dot_proj * norm(:)
 
-      ! cal alpha
-      vec1(:) = p2(:) - p1(:)
-      vec2(:) =  q(:) - p1(:)
-      cpn1    = (vec1(2)*vec2(3)-vec1(3)*vec2(2))**2 &
-      &        +(vec1(3)*vec2(1)-vec1(1)*vec2(3))**2 &
-      &        +(vec1(1)*vec2(2)-vec1(2)*vec2(1))**2
-      cpn1    = sqrt(cpn1)
-
+      ! Total triangle signed area (dot with face normal)
       vec1(:) = p2(:) - p1(:)
       vec2(:) = p3(:) - p1(:)
-      cpn2    = (vec1(2)*vec2(3)-vec1(3)*vec2(2))**2 &
-      &        +(vec1(3)*vec2(1)-vec1(1)*vec2(3))**2 &
-      &        +(vec1(1)*vec2(2)-vec1(2)*vec2(1))**2
-      cpn2    = sqrt(cpn2)
+      cross_vec(1) = vec1(2)*vec2(3) - vec1(3)*vec2(2)
+      cross_vec(2) = vec1(3)*vec2(1) - vec1(1)*vec2(3)
+      cross_vec(3) = vec1(1)*vec2(2) - vec1(2)*vec2(1)
+      total_area = cross_vec(1)*norm(1) + cross_vec(2)*norm(2) + cross_vec(3)*norm(3)
 
-      alpha = cpn1/cpn2
+      ! alpha: sub-triangle (q, p2, p3) / total
+      vec1(:) = p2(:) - q(:)
+      vec2(:) = p3(:) - q(:)
+      cross_vec(1) = vec1(2)*vec2(3) - vec1(3)*vec2(2)
+      cross_vec(2) = vec1(3)*vec2(1) - vec1(1)*vec2(3)
+      cross_vec(3) = vec1(1)*vec2(2) - vec1(2)*vec2(1)
+      sub_area = cross_vec(1)*norm(1) + cross_vec(2)*norm(2) + cross_vec(3)*norm(3)
+      alpha = sub_area / total_area
 
-      ! cal beta
-      vec1(:) = p2(:) - p3(:)
-      vec2(:) =  q(:) - p2(:)
-      cpn1    = (vec1(2)*vec2(3)-vec1(3)*vec2(2))**2 &
-      &        +(vec1(3)*vec2(1)-vec1(1)*vec2(3))**2 &
-      &        +(vec1(1)*vec2(2)-vec1(2)*vec2(1))**2
-      cpn1    = sqrt(cpn1)
+      ! beta: sub-triangle (q, p3, p1) / total
+      vec1(:) = p3(:) - q(:)
+      vec2(:) = p1(:) - q(:)
+      cross_vec(1) = vec1(2)*vec2(3) - vec1(3)*vec2(2)
+      cross_vec(2) = vec1(3)*vec2(1) - vec1(1)*vec2(3)
+      cross_vec(3) = vec1(1)*vec2(2) - vec1(2)*vec2(1)
+      sub_area = cross_vec(1)*norm(1) + cross_vec(2)*norm(2) + cross_vec(3)*norm(3)
+      beta = sub_area / total_area
 
-      vec1(:) = p2(:) - p1(:)
-      vec2(:) = p3(:) - p1(:)
-      cpn2    = (vec1(2)*vec2(3)-vec1(3)*vec2(2))**2 &
-      &        +(vec1(3)*vec2(1)-vec1(1)*vec2(3))**2 &
-      &        +(vec1(1)*vec2(2)-vec1(2)*vec2(1))**2
-      cpn2    = sqrt(cpn2)
-
-      beta = cpn1/cpn2
-
-      ! cal gamma
-      vec1(:) = p3(:) - p1(:)
-      vec2(:) =  q(:) - p3(:)
-      cpn1    = (vec1(2)*vec2(3)-vec1(3)*vec2(2))**2 &
-      &        +(vec1(3)*vec2(1)-vec1(1)*vec2(3))**2 &
-      &        +(vec1(1)*vec2(2)-vec1(2)*vec2(1))**2
-      cpn1    = sqrt(cpn1)
-
-      vec1(:) = p2(:) - p1(:)
-      vec2(:) = p3(:) - p1(:)
-      cpn2    = (vec1(2)*vec2(3)-vec1(3)*vec2(2))**2 &
-      &        +(vec1(3)*vec2(1)-vec1(1)*vec2(3))**2 &
-      &        +(vec1(1)*vec2(2)-vec1(2)*vec2(1))**2
-      cpn2    = sqrt(cpn2)
-
-      gamma = cpn1/cpn2
+      ! gamma: sub-triangle (q, p1, p2) / total
+      vec1(:) = p1(:) - q(:)
+      vec2(:) = p2(:) - q(:)
+      cross_vec(1) = vec1(2)*vec2(3) - vec1(3)*vec2(2)
+      cross_vec(2) = vec1(3)*vec2(1) - vec1(1)*vec2(3)
+      cross_vec(3) = vec1(1)*vec2(2) - vec1(2)*vec2(1)
+      sub_area = cross_vec(1)*norm(1) + cross_vec(2)*norm(2) + cross_vec(3)*norm(3)
+      gamma = sub_area / total_area
 
    end subroutine get_ratio_of_area
 
@@ -742,8 +765,14 @@ contains
       double precision, dimension(3)                      ::  p1, p2, qp
       double precision                                    ::  delta
 
-      delta = (qp(1) - p1(1))*(p2(1) - p1(1)) + (qp(2) - p1(2))*(p2(2) - p1(2)) + (qp(3) - p1(3))*(p2(3) - p1(3))
-      delta = delta/sqrt( (p2(1)-p1(1))**2 + (p2(2)-p1(2))**2 + (p2(3)-p1(3))**2 )
+      ! Local
+      double precision                                    ::  edge_len_sq
+
+      edge_len_sq = (p2(1)-p1(1))**2 + (p2(2)-p1(2))**2 + (p2(3)-p1(3))**2
+
+      delta = ( (qp(1)-p1(1))*(p2(1)-p1(1)) &
+      &        +(qp(2)-p1(2))*(p2(2)-p1(2)) &
+      &        +(qp(3)-p1(3))*(p2(3)-p1(3)) ) / edge_len_sq
 
    end subroutine get_delta
 
