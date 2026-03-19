@@ -5,3 +5,4 @@ gensurf/gensurf.mod
 cellclass/output
 cellcalss/cellclass.exe
 cellclass/cellclass.mod
+*.stl
