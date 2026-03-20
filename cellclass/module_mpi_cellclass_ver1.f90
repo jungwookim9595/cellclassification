@@ -318,8 +318,10 @@ contains
 
    end subroutine get_heaviside_function
  
-   subroutine ghostcell_communication
+   subroutine ghostcell_communication(field)
       implicit none
+
+      double precision, dimension(0:n1sub,0:n2sub,0:n3sub) :: field
 
       integer                                       ::  i, j ,k
       integer                                       ::  buffsize
@@ -337,8 +339,8 @@ contains
       do k = 0,n3sub
       do j = 0,n2sub
           row           = (n2sub+1)*k + j
-          sendeast(row) = sgned_g(n1msub,j,k)
-          sendwest(row) = sgned_g(     1,j,k)
+          sendeast(row) = field(n1msub,j,k)
+          sendwest(row) = field(     1,j,k)
       enddo
       enddo
 
@@ -353,14 +355,14 @@ contains
       do j = 0,n2sub
           row              = (n2sub+1)*k + j
           if (comm_1d_x1%west_rank /= MPI_PROC_NULL) then
-             sgned_g(    0,j,k) = recvwest(row)
+             field(    0,j,k) = recvwest(row)
           else
-             sgned_g(    0,j,k) = sgned_g(1,j,k)
+             field(    0,j,k) = field(1,j,k)
           endif
           if (comm_1d_x1%east_rank /= MPI_PROC_NULL) then
-             sgned_g(n1sub,j,k) = recveast(row)
+             field(n1sub,j,k) = recveast(row)
           else
-             sgned_g(n1sub,j,k) = sgned_g(n1msub,j,k)
+             field(n1sub,j,k) = field(n1msub,j,k)
           endif
       enddo
       enddo
@@ -375,8 +377,8 @@ contains
       do k = 0,n3sub
       do i = 0,n1sub
           row           = (n1sub+1)*k + i
-          sendeast(row) = sgned_g(i,n2msub,k)
-          sendwest(row) = sgned_g(i,     1,k)
+          sendeast(row) = field(i,n2msub,k)
+          sendwest(row) = field(i,     1,k)
       enddo
       enddo
 
@@ -390,14 +392,14 @@ contains
       do i = 0,n1sub
           row              = (n1sub+1)*k + i
           if (comm_1d_x2%west_rank /= MPI_PROC_NULL) then
-             sgned_g(i,    0,k) = recvwest(row)
+             field(i,    0,k) = recvwest(row)
           else
-             sgned_g(i,    0,k) = sgned_g(i,1,k)
+             field(i,    0,k) = field(i,1,k)
           endif
           if (comm_1d_x2%east_rank /= MPI_PROC_NULL) then
-             sgned_g(i,n2sub,k) = recveast(row)
+             field(i,n2sub,k) = recveast(row)
           else
-             sgned_g(i,n2sub,k) = sgned_g(i,n2msub,k)
+             field(i,n2sub,k) = field(i,n2msub,k)
           endif
       enddo
       enddo
@@ -408,12 +410,12 @@ contains
       buffsize = (n1sub+1)*(n2sub+1)
       allocate(sendeast(0:buffsize), sendwest(0:buffsize))
       allocate(recveast(0:buffsize), recvwest(0:buffsize))
-      
+
       do j = 0,n2sub
       do i = 0,n1sub
           row           = (n1sub+1)*j + i
-          sendeast(row) = sgned_g(i,j,n3msub)
-          sendwest(row) = sgned_g(i,j,     1)
+          sendeast(row) = field(i,j,n3msub)
+          sendwest(row) = field(i,j,     1)
       enddo
       enddo
 
@@ -422,150 +424,26 @@ contains
       call MPI_Isend(sendwest, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x3%west_rank, 666, comm_1d_x3%mpi_comm, request(3), ierr)
       call MPI_Irecv(recveast, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x3%east_rank, 666, comm_1d_x3%mpi_comm, request(4), ierr)
       call MPI_Waitall(4, request, MPI_STATUSES_IGNORE, ierr)
- 
+
       do j = 0,n2sub
       do i = 0,n1sub
           row              = (n1sub+1)*j + i
           if (comm_1d_x3%west_rank /= MPI_PROC_NULL) then
-             sgned_g(i,j,    0) = recvwest(row)
+             field(i,j,    0) = recvwest(row)
           else
-             sgned_g(i,j,    0) = sgned_g(i,j,1)
+             field(i,j,    0) = field(i,j,1)
           endif
           if (comm_1d_x3%east_rank /= MPI_PROC_NULL) then
-             sgned_g(i,j,n3sub) = recveast(row)
+             field(i,j,n3sub) = recveast(row)
           else
-             sgned_g(i,j,n3sub) = sgned_g(i,j,n3msub)
+             field(i,j,n3sub) = field(i,j,n3msub)
           endif
       enddo
       enddo
 
       deallocate(sendeast, sendwest, recveast, recvwest)
-      
+
    end subroutine ghostcell_communication
-
-   subroutine ghostcell_communication_heavi
-      implicit none
-
-      integer                                       ::  i, j ,k
-      integer                                       ::  buffsize
-      integer                                       ::  row
-      double precision, allocatable, dimension(:)   ::  sendeast, sendwest
-      double precision, allocatable, dimension(:)   ::  recveast, recvwest
-      integer                                       ::  request(4)
-      integer                                       ::  ierr
-
-      ! X-direction
-      buffsize = (n2sub+1)*(n3sub+1)
-      allocate(sendeast(0:buffsize), sendwest(0:buffsize))
-      allocate(recveast(0:buffsize), recvwest(0:buffsize))
-
-      do k = 0,n3sub
-      do j = 0,n2sub
-          row           = (n2sub+1)*k + j
-          sendeast(row) = heavi_g(n1msub,j,k)
-          sendwest(row) = heavi_g(     1,j,k)
-      enddo
-      enddo
-
-      call MPI_Isend(sendeast, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x1%east_rank, 711, comm_1d_x1%mpi_comm, request(1), ierr)
-      call MPI_Irecv(recvwest, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x1%west_rank, 711, comm_1d_x1%mpi_comm, request(2), ierr)
-      call MPI_Isend(sendwest, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x1%west_rank, 722, comm_1d_x1%mpi_comm, request(3), ierr)
-      call MPI_Irecv(recveast, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x1%east_rank, 722, comm_1d_x1%mpi_comm, request(4), ierr)
-      call MPI_Waitall(4, request, MPI_STATUSES_IGNORE, ierr)
-
-      do k = 0,n3sub
-      do j = 0,n2sub
-          row              = (n2sub+1)*k + j
-          if (comm_1d_x1%west_rank /= MPI_PROC_NULL) then
-             heavi_g(    0,j,k) = recvwest(row)
-          else
-             heavi_g(    0,j,k) = heavi_g(1,j,k)
-          endif
-          if (comm_1d_x1%east_rank /= MPI_PROC_NULL) then
-             heavi_g(n1sub,j,k) = recveast(row)
-          else
-             heavi_g(n1sub,j,k) = heavi_g(n1msub,j,k)
-          endif
-      enddo
-      enddo
-
-      deallocate(sendeast, sendwest, recveast, recvwest)
-
-      ! Y-direction
-      buffsize = (n1sub+1)*(n3sub+1)
-      allocate(sendeast(0:buffsize), sendwest(0:buffsize))
-      allocate(recveast(0:buffsize), recvwest(0:buffsize))
-
-      do k = 0,n3sub
-      do i = 0,n1sub
-          row           = (n1sub+1)*k + i
-          sendeast(row) = heavi_g(i,n2msub,k)
-          sendwest(row) = heavi_g(i,     1,k)
-      enddo
-      enddo
-
-      call MPI_Isend(sendeast, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x2%east_rank, 733, comm_1d_x2%mpi_comm, request(1), ierr)
-      call MPI_Irecv(recvwest, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x2%west_rank, 733, comm_1d_x2%mpi_comm, request(2), ierr)
-      call MPI_Isend(sendwest, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x2%west_rank, 744, comm_1d_x2%mpi_comm, request(3), ierr)
-      call MPI_Irecv(recveast, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x2%east_rank, 744, comm_1d_x2%mpi_comm, request(4), ierr)
-      call MPI_Waitall(4, request, MPI_STATUSES_IGNORE, ierr)
-
-      do k = 0,n3sub
-      do i = 0,n1sub
-          row              = (n1sub+1)*k + i
-          if (comm_1d_x2%west_rank /= MPI_PROC_NULL) then
-             heavi_g(i,    0,k) = recvwest(row)
-          else
-             heavi_g(i,    0,k) = heavi_g(i,1,k)
-          endif
-          if (comm_1d_x2%east_rank /= MPI_PROC_NULL) then
-             heavi_g(i,n2sub,k) = recveast(row)
-          else
-             heavi_g(i,n2sub,k) = heavi_g(i,n2msub,k)
-          endif
-      enddo
-      enddo
-
-      deallocate(sendeast, sendwest, recveast, recvwest)
-
-      ! Z-direction
-      buffsize = (n1sub+1)*(n2sub+1)
-      allocate(sendeast(0:buffsize), sendwest(0:buffsize))
-      allocate(recveast(0:buffsize), recvwest(0:buffsize))
-
-      do j = 0,n2sub
-      do i = 0,n1sub
-          row           = (n1sub+1)*j + i
-          sendeast(row) = heavi_g(i,j,n3msub)
-          sendwest(row) = heavi_g(i,j,     1)
-      enddo
-      enddo
-
-      call MPI_Isend(sendeast, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x3%east_rank, 755, comm_1d_x3%mpi_comm, request(1), ierr)
-      call MPI_Irecv(recvwest, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x3%west_rank, 755, comm_1d_x3%mpi_comm, request(2), ierr)
-      call MPI_Isend(sendwest, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x3%west_rank, 766, comm_1d_x3%mpi_comm, request(3), ierr)
-      call MPI_Irecv(recveast, buffsize, MPI_DOUBLE_PRECISION, comm_1d_x3%east_rank, 766, comm_1d_x3%mpi_comm, request(4), ierr)
-      call MPI_Waitall(4, request, MPI_STATUSES_IGNORE, ierr)
-
-      do j = 0,n2sub
-      do i = 0,n1sub
-          row              = (n1sub+1)*j + i
-          if (comm_1d_x3%west_rank /= MPI_PROC_NULL) then
-             heavi_g(i,j,    0) = recvwest(row)
-          else
-             heavi_g(i,j,    0) = heavi_g(i,j,1)
-          endif
-          if (comm_1d_x3%east_rank /= MPI_PROC_NULL) then
-             heavi_g(i,j,n3sub) = recveast(row)
-          else
-             heavi_g(i,j,n3sub) = heavi_g(i,j,n3msub)
-          endif
-      enddo
-      enddo
-
-      deallocate(sendeast, sendwest, recveast, recvwest)
-
-   end subroutine ghostcell_communication_heavi
 
    subroutine save_cc
       implicit none
@@ -636,9 +514,9 @@ contains
 
 
       call get_signed_distance_function_global
-      call ghostcell_communication
+      call ghostcell_communication(sgned_g)
       call get_heaviside_function
-      call ghostcell_communication_heavi
+      call ghostcell_communication(heavi_g)
       call save_cc
 
       call var_cc_clean
