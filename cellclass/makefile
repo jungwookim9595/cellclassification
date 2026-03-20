@@ -11,7 +11,7 @@ CPPLIB = -L../ann_0.2/lib -lANN -lstdc++ -lm
 global      = module_global.o
 module_mpi  = module_mpi_topology.o module_mpi_subdomain.o
 walldist	= walldist.o
-cellclass 	= module_mpi_cellclass_ver2.o
+cellclass 	= module_mpi_cellclass_ver3.o
 main 	    = main.o 
 
 OBJS   	    = $(global) $(module_mpi) $(walldist) $(cellclass) $(main)
@@ -31,8 +31,8 @@ module_mpi_subdomain.o: module_mpi_subdomain.f90
 walldist.o: walldist.cpp
 	mpicxx walldist.cpp -c $(CCFLAGS) $(ANNLIB)
 
-module_mpi_cellclass_ver2.o: walldist.o module_mpi_cellclass_ver2.f90
-	$(FC) -c module_mpi_cellclass_ver2.f90
+module_mpi_cellclass_ver3.o: walldist.o module_mpi_cellclass_ver3.f90
+	$(FC) -c module_mpi_cellclass_ver3.f90
 
 main.o: $(global) $(module_mpi) $(walldist) $(cellclass) main.f90
 	$(FC) -c main.f90

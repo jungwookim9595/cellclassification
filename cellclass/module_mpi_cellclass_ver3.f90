@@ -33,7 +33,7 @@ module mpi_cellclass
    implicit none
 
    integer                                           ::  nstlf    = 1
-   integer                                           ::  nsearch  = 100
+   integer                                           ::  nsearch  = 300
    double precision                                  ::  dist_CAD = 1
 
    type(ibpara)                                      ::  para
@@ -449,7 +449,7 @@ contains
       implicit none
       integer             ::  i, j, k
       character(len=100)  ::  fileout
-      double precision    ::  phi_node, heavi_node
+      double precision    ::  xx, yy, zz
 
       if(myrank==0) then
          write(*,*) ' Writing outputs..'
@@ -460,19 +460,14 @@ contains
 
       open(4,file=trim(fileout),action='write')
       write(4,*) 'variables="X","Y","Z","Phi"'
-      write(4,*) 'zone i=',n1sub,', j=',n2sub,', k=',n3sub
-      ! Output loop: node-based (1 ~ n*sub)
-      ! node(i,j,k) coordinate = x1_sub(i)
-      ! node(i,j,k) value = average of 8 adjacent cell centers
-      do k=1,n3sub
-         do j=1,n2sub
-            do i=1,n1sub
-               phi_node = 0.125d0 * (                      &
-                  sgned_g(i-1, j-1, k-1) + sgned_g(i, j-1, k-1) + &
-                  sgned_g(i-1, j,   k-1) + sgned_g(i, j,   k-1) + &
-                  sgned_g(i-1, j-1, k  ) + sgned_g(i, j-1, k  ) + &
-                  sgned_g(i-1, j,   k  ) + sgned_g(i, j,   k  ) )
-               write(4,*) x1_sub(i),x2_sub(j),x3_sub(k),phi_node
+      write(4,*) 'zone i=',n1sub+1,', j=',n2sub+1,', k=',n3sub+1
+      do k=0,n3sub
+         do j=0,n2sub
+            do i=0,n1sub
+               xx = x1_sub(i) + 0.5d0 * dx1_sub(i)
+               yy = x2_sub(j) + 0.5d0 * dx2_sub(j)
+               zz = x3_sub(k) + 0.5d0 * dx3_sub(k)
+               write(4,*) xx, yy, zz, sgned_g(i,j,k)
             enddo
          enddo
       enddo
@@ -483,16 +478,14 @@ contains
 
       open(5,file=trim(fileout),action='write')
       write(5,*) 'variables="X","Y","Z","G"'
-      write(5,*) 'zone i=',n1sub,', j=',n2sub,', k=',n3sub
-      do k=1,n3sub
-         do j=1,n2sub
-            do i=1,n1sub
-               heavi_node = 0.125d0 * (                       &
-                  heavi_g(i-1, j-1, k-1) + heavi_g(i, j-1, k-1) + &
-                  heavi_g(i-1, j,   k-1) + heavi_g(i, j,   k-1) + &
-                  heavi_g(i-1, j-1, k  ) + heavi_g(i, j-1, k  ) + &
-                  heavi_g(i-1, j,   k  ) + heavi_g(i, j,   k  ) )
-               write(5,*) x1_sub(i),x2_sub(j),x3_sub(k),heavi_node
+      write(5,*) 'zone i=',n1sub+1,', j=',n2sub+1,', k=',n3sub+1
+      do k=0,n3sub
+         do j=0,n2sub
+            do i=0,n1sub
+               xx = x1_sub(i) + 0.5d0 * dx1_sub(i)
+               yy = x2_sub(j) + 0.5d0 * dx2_sub(j)
+               zz = x3_sub(k) + 0.5d0 * dx3_sub(k)
+               write(5,*) xx, yy, zz, heavi_g(i,j,k)
             enddo
          enddo
       enddo
@@ -511,7 +504,6 @@ contains
 
       double precision, dimension(0:n1sub,0:n2sub,0:n3sub)  ::  sgned
       call var_cc_make
-
 
       call get_signed_distance_function_global
       call ghostcell_communication(sgned_g)
@@ -576,6 +568,7 @@ contains
                enddo
 
                if(restriction.EQ.nsearch) then !extend search
+                  write(*,*) '[warning] extended search detacted. computation time will be huge.'
                   restriction = 0
                   call wldst_getdists_xyz(qp(1), qp(2), qp(3), indexarray2, distarray2, para%nvert)
                   do mm = 1,para%nvert
