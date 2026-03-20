@@ -33,8 +33,8 @@ module mpi_cellclass
    implicit none
 
    integer                                           ::  nstlf    = 1
-   integer                                           ::  nsearch  = 30
-   double precision                                  ::  dist_CAD = 0.01
+   integer                                           ::  nsearch  = 100
+   double precision                                  ::  dist_CAD = 1
 
    type(ibpara)                                      ::  para
    type(ibvert), allocatable, dimension(:)           ::  vert

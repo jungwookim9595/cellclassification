@@ -37,9 +37,9 @@ gamma3 = 3.0
 /
 
 &aspect_ratio
-Aspect1 = 1
-H       = 2
-Aspect3 = 1
+Aspect1 = 3.5
+H       = 60
+Aspect3 = 2.5
 /
 
 &sim_parameter
