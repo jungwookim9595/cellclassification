@@ -42,6 +42,7 @@ module mpi_cellclass
    type(ibedge), allocatable, dimension(:)           ::  edge
 
    double precision , allocatable, dimension(:,:,:)  :: sgned_g, heavi_g
+   double precision , allocatable, dimension(:,:,:)  :: norm_x_g, norm_y_g, norm_z_g
 
 contains
 
@@ -61,12 +62,21 @@ contains
 
       allocate( sgned_g(0:n1sub,0:n2sub,0:n3sub), heavi_g(0:n1sub,0:n2sub,0:n3sub) )
 
-      sgned_g = 999.0d0
-      heavi_g = 0.0d0
+      allocate( norm_x_g(0:n1sub,0:n2sub,0:n3sub) )
+      allocate( norm_y_g(0:n1sub,0:n2sub,0:n3sub) )
+      allocate( norm_z_g(0:n1sub,0:n2sub,0:n3sub) )
+
+      sgned_g  = 999.0d0
+      heavi_g  = 0.0d0
+
+      norm_x_g = 0.0d0
+      norm_y_g = 0.0d0
+      norm_z_g = 0.0d0
    end subroutine var_cc_make
 
    subroutine var_cc_clean
       deallocate( sgned_g, heavi_g )
+      deallocate( norm_x_g, norm_y_g, norm_z_g )
    end subroutine var_cc_clean
 
    subroutine check_npt_total(filestl)
@@ -202,6 +212,7 @@ contains
       integer                                              ::  solidnum, i, k, j, ierr
       character(len=80)                                    ::  solidnum2str, filestl
       double precision, dimension(0:n1sub,0:n2sub,0:n3sub) ::  sgned
+      double precision, dimension(0:n1sub,0:n2sub,0:n3sub) ::  snorm_x, snorm_y, snorm_z
 
       do solidnum = 1, nstlf
 
@@ -219,7 +230,7 @@ contains
 
          call var_surf_make
          call read_stl(filestl)
-         call get_signed_distance_function_ANN(sgned)
+         call get_signed_distance_function_ANN(sgned, snorm_x, snorm_y, snorm_z)
          ! !debug
          ! call debug_save_cc(sgned)
          ! !debug
@@ -229,7 +240,12 @@ contains
          do k=1,n3msub
             do j=1,n2msub
                do i=1,n1msub
-                  sgned_g(i,j,k) = min(sgned(i,j,k),sgned_g(i,j,k))
+                  if (sgned(i,j,k) .LT. sgned_g(i,j,k)) then
+                     sgned_g(i,j,k)  = sgned(i,j,k)
+                     norm_x_g(i,j,k) = snorm_x(i,j,k)
+                     norm_y_g(i,j,k) = snorm_y(i,j,k)
+                     norm_z_g(i,j,k) = snorm_z(i,j,k)
+                  endif
                enddo
             enddo
          enddo
@@ -451,6 +467,8 @@ contains
       character(len=100)  ::  fileout
       double precision    ::  xx, yy, zz
 
+      double precision    ::  nx_out, ny_out, nz_out
+
       if(myrank==0) then
          write(*,*) ' Writing outputs..'
       endif
@@ -491,6 +509,41 @@ contains
       enddo
       close(5)
 
+      ! ================================================================
+      ! ===== Band cell 법선벡터 출력 =====
+      ! Band cell 정의: Phi > 0 이면서 G = 1 (표면 바로 바깥쪽 유체 셀)
+      ! 나머지(Field, Interior)는 0벡터 출력
+      ! ================================================================
+      write(fileout, '(1A29,3(A1,I1),1A4)') 'output/result/G/out_band_norm','_',&
+         comm_1d_x1%myrank,'_',comm_1d_x2%myrank,'_',comm_1d_x3%myrank,'.dat'
+
+      open(6,file=trim(fileout),action='write')
+      write(6,*) 'variables="X","Y","Z","NX","NY","NZ"'
+      write(6,*) 'zone i=',n1sub+1,', j=',n2sub+1,', k=',n3sub+1
+      do k=0,n3sub
+         do j=0,n2sub
+            do i=0,n1sub
+               xx = x1_sub(i) + 0.5d0 * dx1_sub(i)
+               yy = x2_sub(j) + 0.5d0 * dx2_sub(j)
+               zz = x3_sub(k) + 0.5d0 * dx3_sub(k)
+
+               ! Band cell: G=1 이면서 Phi > 0
+               if (heavi_g(i,j,k) .GT. 0.5d0 .AND. sgned_g(i,j,k) .GT. 0.0d0) then
+                  nx_out = norm_x_g(i,j,k)
+                  ny_out = norm_y_g(i,j,k)
+                  nz_out = norm_z_g(i,j,k)
+               else
+                  nx_out = 0.0d0
+                  ny_out = 0.0d0
+                  nz_out = 0.0d0
+               endif
+
+               write(6,*) xx, yy, zz, nx_out, ny_out, nz_out
+            enddo
+         enddo
+      enddo
+      close(6)
+
       if(myrank==0) then
          write(*,*) '=============================================='
          write(*,*) ' Cell Classification is Done.'
@@ -507,6 +560,11 @@ contains
 
       call get_signed_distance_function_global
       call ghostcell_communication(sgned_g)
+
+      call ghostcell_communication(norm_x_g)
+      call ghostcell_communication(norm_y_g)
+      call ghostcell_communication(norm_z_g)
+
       call get_heaviside_function
       call ghostcell_communication(heavi_g)
       call save_cc
@@ -515,7 +573,7 @@ contains
 
    end subroutine cell_classification
 
-   subroutine get_signed_distance_function_ANN(sgned)
+   subroutine get_signed_distance_function_ANN(sgned, snorm_x, snorm_y, snorm_z)
       implicit none
 
       integer                                               ::  i, j, K, LL ,mm, id
@@ -529,6 +587,7 @@ contains
       double precision                                      ::  check_dist
 
       double precision, dimension(0:n1sub,0:n2sub,0:n3sub)  ::  sgned
+      double precision, dimension(0:n1sub,0:n2sub,0:n3sub)  ::  snorm_x, snorm_y, snorm_z
 
       allocate(indexarray(nsearch), idmapping(nsearch), distarray(nsearch))
       allocate(indexarray2(para%nvert), idmapping2(para%nvert), distarray2(para%nvert))
@@ -538,7 +597,6 @@ contains
       pty(:) = vert(:)%xyz(2)
       ptz(:) = vert(:)%xyz(3)
       call wldst_create_tree(ptx(1), pty(1), ptz(1), para%nvert)
-      ! call wldst_create_tree(vert(1)%xyz(1), vert(1)%xyz(2), vert(1)%xyz(3), para%nvert)
 
       do k = 1,n3msub
          do j = 1,n2msub
@@ -626,15 +684,19 @@ contains
                   sign_SDF = sign_SDF/abs(sign_SDF)
                   sgned(i,j,k) = sign_SDF*distance
                endif
+
+               snorm_x(i,j,k) = real_clst_norm(1)
+               snorm_y(i,j,k) = real_clst_norm(2)
+               snorm_z(i,j,k) = real_clst_norm(3)
             enddo
          enddo
-         ! if(myrank==0) then
-         !     if(k==int(n3sub*0.1 )) write(*,*) '   10%..   '
-         !     if(k==int(n3sub*0.25)) write(*,*) '   25%..   '
-         !     if(k==int(n3sub*0.5 )) write(*,*) '   50%..   '
-         !     if(k==int(n3sub*0.75)) write(*,*) '   75%..   '
-         !     if(k==int(n3sub     )) write(*,*) '   100%..  '
-         ! endif
+         if(myrank==0) then
+             if(k==int(n3sub*0.1 )) write(*,*) '   10%..   '
+             if(k==int(n3sub*0.25)) write(*,*) '   25%..   '
+             if(k==int(n3sub*0.5 )) write(*,*) '   50%..   '
+             if(k==int(n3sub*0.75)) write(*,*) '   75%..   '
+             if(k==int(n3sub     )) write(*,*) '   100%..  '
+         endif
       enddo
 
       call wldst_delete_tree
