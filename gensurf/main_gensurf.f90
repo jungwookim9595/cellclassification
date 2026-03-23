@@ -121,9 +121,11 @@ program main
      allocate(ncelem(nls))
      allocate(ncvert(nls))
 
+     write(6,*) 'DEBUG: calling ibsurface_seg_param'; flush(6)
      call ibsurface_seg_param(ibparaorgmx, ibvertorg, ibelemorg, ibparaorg, &
           indxmapping, ielemmapping, ielemseg, ncelem, ncvert, &
           ielem_seg2org, ivert_seg2org, ivert_org2seg, nls, nlsmap, nlsf, nlsfile)
+     write(6,*) 'DEBUG: ibsurface_seg_param done, ncelem(1)=',ncelem(1),' ncvert(1)=',ncvert(1); flush(6)
 
      allocate(ibpara(nls))
 
@@ -140,18 +142,25 @@ program main
         ibparamx%nedge = max(ibparamx%nedge, ibpara(ll)%nedge)
      end do
 
+     write(6,*) 'DEBUG: ibparamx nvert/nelem/nedge=',ibparamx%nvert,ibparamx%nelem,ibparamx%nedge; flush(6)
      allocate(ibvert(ibparamx%nvert, nls))
+     write(6,*) 'DEBUG: ibvert allocated'; flush(6)
      allocate(ibelem(ibparamx%nelem, nls))
+     write(6,*) 'DEBUG: ibelem allocated'; flush(6)
      allocate(ibedge(ibparamx%nedge, nls))
-     
+     write(6,*) 'DEBUG: ibedge allocated, calling ibsurface_seg'; flush(6)
+
      call ibsurface_seg(ibparaorgmx, ibvertorg, ibelemorg, ibparaorg, &
           ibparamx, ibvert, ibelem, ibedge, ibpara, &
           ielem_seg2org, ivert_seg2org, ivert_org2seg, nls, nlsmap, nlsf, nlsfile)
-     
+     write(6,*) 'DEBUG: ibsurface_seg done'; flush(6)
+
+     write(6,*) 'DEBUG: deallocating org arrays'; flush(6)
      deallocate(ibvertorg, ibelemorg, ielemmapping, ielemseg)
      deallocate(ielem_seg2org, ivert_org2seg)
      deallocate(ncelem, ncvert)
      deallocate(nlsmap)
+     write(6,*) 'DEBUG: deallocations done'; flush(6)
 
      write(6, *) 'Segmented levelset info.'
      do ll = 1, nls
