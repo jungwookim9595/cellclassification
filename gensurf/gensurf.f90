@@ -388,9 +388,11 @@ subroutine find_connectivity(paramx, vert, elem, para)
   type(vertex), intent(in) :: vert(paramx%nvert)
   type(element), intent(inout) :: elem(paramx%nelem)
 
-  integer :: indx(1000, 3)
+  integer, allocatable :: indx(:,:)
   integer :: np(3), mp(3)
   integer :: nn, mm, ll, k, nc, ip1, ip2
+
+  allocate(indx(1000, 3))
 
   do nn = 1, para%nelem
      np(:) = elem(nn)%vert(:)
@@ -419,6 +421,8 @@ subroutine find_connectivity(paramx, vert, elem, para)
      if (nc == 0) write(6, *) 'element w/o connection is found', nn
      if (nc > 3) write(6, *) 'wrong connection is found', nn
   end do
+
+  deallocate(indx)
 
   return
 end subroutine find_connectivity
@@ -436,9 +440,11 @@ subroutine find_connectivity_org(paramx, vert, elem, para)
   type(vertexorg), intent(in) :: vert(paramx%nvert)
   type(elementorg), intent(inout) :: elem(paramx%nelem)
 
-  integer :: indx(nshare, 3)
+  integer, allocatable :: indx(:,:)
   integer :: np(3), mp(3)
   integer :: nn, mm, ll, k, nc, ip1, ip2
+
+  allocate(indx(nshare, 3))
 
   do nn = 1, para%nelem
      np(:) = elem(nn)%vert(:)
@@ -467,6 +473,8 @@ subroutine find_connectivity_org(paramx, vert, elem, para)
      if (nc == 0) write(6, *) 'element w/o connection is found', nn
      if (nc > 3) write(6, *) 'wrong connection is found', nn
   end do
+
+  deallocate(indx)
 
   return
 end subroutine find_connectivity_org
@@ -616,8 +624,10 @@ subroutine shared_edge(paramx, vert, elem, edge, para)
      write(6, *) 'Total edge number', ne
      write(6, *) 'edge'
      do nn = 1, para%nedgea
-        write(6, '(30I6)') nn, edge(nn)%elem(1:2), edge(nn)%vert(1:2)
-        write(6, '(I6,30E15.7)') nn, vert(edge(nn)%vert(1))%xyz, vert(edge(nn)%vert(2))%xyz
+        write(6, '(30I6)') nn, edge(nn)%elem(1), edge(nn)%elem(2), edge(nn)%vert(1), edge(nn)%vert(2)
+        write(6, '(I6,30E15.7)') nn, vert(edge(nn)%vert(1))%xyz(1), vert(edge(nn)%vert(1))%xyz(2), &
+             vert(edge(nn)%vert(1))%xyz(3), vert(edge(nn)%vert(2))%xyz(1), &
+             vert(edge(nn)%vert(2))%xyz(2), vert(edge(nn)%vert(2))%xyz(3)
      end do
   end if
 
@@ -1657,11 +1667,11 @@ subroutine output_stl(paramx, vert, elem, para, l)
 
   do nn = 1, para%nelem
      np(:) = elem(nn)%vert(:)
-     write(10, '(A,3E15.7)') '  facet normal ', elem(nn)%norm(:)
+     write(10, '(A,3E15.7)') '  facet normal ', elem(nn)%norm(1), elem(nn)%norm(2), elem(nn)%norm(3)
      write(10, '(A)') '    outer loop'
-     write(10, '(A,3E15.7)') '      vertex ', vert(np(1))%xyz(:)
-     write(10, '(A,3E15.7)') '      vertex ', vert(np(2))%xyz(:)
-     write(10, '(A,3E15.7)') '      vertex ', vert(np(3))%xyz(:)
+     write(10, '(A,3E15.7)') '      vertex ', vert(np(1))%xyz(1), vert(np(1))%xyz(2), vert(np(1))%xyz(3)
+     write(10, '(A,3E15.7)') '      vertex ', vert(np(2))%xyz(1), vert(np(2))%xyz(2), vert(np(2))%xyz(3)
+     write(10, '(A,3E15.7)') '      vertex ', vert(np(3))%xyz(1), vert(np(3))%xyz(2), vert(np(3))%xyz(3)
      write(10, '(A)') '    endloop'
      write(10, '(A)') '  endfacet'
   end do
@@ -1756,8 +1766,8 @@ subroutine output_custom(paramx, vert, elem, edge, para, l)
   write(10, '(A,I10)') 'nvert= ', para%nvert
   do nn = 1, para%nvert
      write(10, '(A)') '  vertloop'
-     write(10, '(A,3E15.7)') '    vertex ', vert(nn)%xyz(:)
-     write(10, '(A,3E15.7)') '    pseudonormal ', vert(nn)%norm(:)
+     write(10, '(A,3E15.7)') '    vertex ', vert(nn)%xyz(1), vert(nn)%xyz(2), vert(nn)%xyz(3)
+     write(10, '(A,3E15.7)') '    pseudonormal ', vert(nn)%norm(1), vert(nn)%norm(2), vert(nn)%norm(3)
      write(10, '(A,I3)') '      nshare= ', vert(nn)%share(1)
      do mm = 1, vert(nn)%share(1)
         write(10, '(A,I10)') '        ', vert(nn)%share(mm + 1)
@@ -1769,9 +1779,9 @@ subroutine output_custom(paramx, vert, elem, edge, para, l)
   write(10, '(A,I10)') 'nedge= ', para%nedgea
   do nn = 1, para%nedgea
      write(10, '(A)') '  edgeloop'
-     write(10, '(A,3E15.7)') '    edgecenter ', edge(nn)%xyz(:)
-     write(10, '(A,3E15.7)') '    edgenormal ', edge(nn)%norm(:)
-     write(10, '(A,2I10)') '      vertindx ', edge(nn)%vert(:)
+     write(10, '(A,3E15.7)') '    edgecenter ', edge(nn)%xyz(1), edge(nn)%xyz(2), edge(nn)%xyz(3)
+     write(10, '(A,3E15.7)') '    edgenormal ', edge(nn)%norm(1), edge(nn)%norm(2), edge(nn)%norm(3)
+     write(10, '(A,2I10)') '      vertindx ', edge(nn)%vert(1), edge(nn)%vert(2)
      write(10, '(A)') '  endedgeloop'
   end do
   write(10, '(A)') 'endedge'
@@ -1779,10 +1789,10 @@ subroutine output_custom(paramx, vert, elem, edge, para, l)
   write(10, '(A,I10)') 'nelem= ', para%nelem
   do nn = 1, para%nelem
      write(10, '(A)') '  elemloop'
-     write(10, '(A,3E15.7)') '    facetcenter ', elem(nn)%xyz(:)
-     write(10, '(A,3E15.7)') '    facetnormal ', elem(nn)%norm(:)
-     write(10, '(A,3I10)') '      vertindx ', elem(nn)%vert(:)
-     write(10, '(A,3I10)') '      edgeindx ', elem(nn)%edge(:)
+     write(10, '(A,3E15.7)') '    facetcenter ', elem(nn)%xyz(1), elem(nn)%xyz(2), elem(nn)%xyz(3)
+     write(10, '(A,3E15.7)') '    facetnormal ', elem(nn)%norm(1), elem(nn)%norm(2), elem(nn)%norm(3)
+     write(10, '(A,3I10)') '      vertindx ', elem(nn)%vert(1), elem(nn)%vert(2), elem(nn)%vert(3)
+     write(10, '(A,3I10)') '      edgeindx ', elem(nn)%edge(1), elem(nn)%edge(2), elem(nn)%edge(3)
      write(10, '(A)') '  endelemloop'
   end do
   write(10, '(A)') 'endelem'
@@ -1844,10 +1854,10 @@ subroutine output_tecplot(paramx, vert, elem, para, nls, nseq)
      write(10, '(A)') ' DT=(DOUBLE DOUBLE DOUBLE )'
 
      do nn = 1, para(ll)%nvert
-        write(10, '(3(1PE22.9E3))') vert(nn, ll)%xyz
+        write(10, '(3(1PE22.9E3))') vert(nn, ll)%xyz(1), vert(nn, ll)%xyz(2), vert(nn, ll)%xyz(3)
      end do
      do nn = 1, para(ll)%nelem
-        write(10, *) elem(nn, ll)%vert
+        write(10, *) elem(nn, ll)%vert(1), elem(nn, ll)%vert(2), elem(nn, ll)%vert(3)
      end do
 
      do nn = 1, para(ll)%nelem
