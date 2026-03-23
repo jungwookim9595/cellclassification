@@ -359,6 +359,11 @@ subroutine face_normal(paramx, vert, elem, para)
 
   do nn = 1, para%nelem
      np(:) = elem(nn)%vert(:)
+     if (any(np < 1) .or. any(np > para%nvert)) then
+        write(6,*) 'face_normal: bad vert index at elem',nn,' np=',np,' nvert=',para%nvert
+        flush(6)
+        stop 'invalid vertex index in face_normal'
+     end if
      xp2(:) = vert(np(3))%xyz(:) - vert(np(2))%xyz(:)
      xp1(:) = vert(np(2))%xyz(:) - vert(np(1))%xyz(:)
 

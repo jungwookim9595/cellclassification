@@ -13,9 +13,9 @@ CXX = g++
 # -r8 flag retained as backup for any remaining default-real code paths.
 # Primary precision control is via explicit real(8) in source code.
 # Remove -r8 once all real declarations are confirmed as real(8).
-FCFLAGS = -O2
-# Debug build: uncomment below
-# FCFLAGS = -O0 -g -Mbounds -Mchkptr -Minfo
+# FCFLAGS = -O2
+# Debug build:
+FCFLAGS = -O0 -g -Mbounds -Mchkptr -Minfo
 
 # C++ flags
 CCFLAGS = -I../ann_0.2/include
