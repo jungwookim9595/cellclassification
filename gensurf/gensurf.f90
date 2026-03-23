@@ -1175,8 +1175,9 @@ subroutine convert2ibsurface(filestl, paramx, vert, elem, para, indxmapping, iel
 
   ! Find segment
   call find_segment(paramx, vert, elem, ielemseg, para)
+  nlsf = 0
   do nn = 1, para%nelem
-     nlsf = max(1, ielemseg(nn))
+     nlsf = max(nlsf, ielemseg(nn))
      if (ielemseg(nn) == 0) then
         write(6, *) 'Un-assigned elements are detected!!', nn
      end if
@@ -1296,14 +1297,23 @@ subroutine ibsurface_seg(paraorgmx, vertorg, elemorg, paraorg, &
   ! Check the normal vectors
 
   do ll = 1, nls
+     write(6,*) 'DEBUG ibsurface_seg: ll=',ll,' nvert=',para(ll)%nvert,' nelem=',para(ll)%nelem; flush(6)
      para(ll)%iedge = 2  ! initialize before edge_normal (default value from output_bin)
+     write(6,*) 'DEBUG: calling shared_vertices ll=',ll; flush(6)
      call shared_vertices(paramx, vert(1, ll), elem(1, ll), para(ll))
+     write(6,*) 'DEBUG: calling find_connectivity ll=',ll; flush(6)
      call find_connectivity(paramx, vert(1, ll), elem(1, ll), para(ll))
+     write(6,*) 'DEBUG: calling conn_correction ll=',ll; flush(6)
      call conn_correction(paramx, vert(1, ll), elem(1, ll), para(ll))
+     write(6,*) 'DEBUG: calling shared_edge ll=',ll; flush(6)
      call shared_edge(paramx, vert(1, ll), elem(1, ll), edge(1, ll), para(ll))
+     write(6,*) 'DEBUG: calling face_normal ll=',ll; flush(6)
      call face_normal(paramx, vert(1, ll), elem(1, ll), para(ll))
+     write(6,*) 'DEBUG: calling edge_normal ll=',ll; flush(6)
      call edge_normal(paramx, vert(1, ll), elem(1, ll), edge(1, ll), para(ll))
+     write(6,*) 'DEBUG: calling pseudo_normal ll=',ll; flush(6)
      call pseudo_normal(paramx, vert(1, ll), elem(1, ll), edge(1, ll), para(ll))
+     write(6,*) 'DEBUG: pseudo_normal done ll=',ll; flush(6)
   end do
 
   return
