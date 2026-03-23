@@ -247,4 +247,9 @@ extern "C" {
     delete []nn_idx; delete [] dist_array;
     return;
   }
+  void wldst_ann_search_(double *x, double *y, double *z, int *knear, int *indx, double *dist)
+  {
+      wldst_getdists_xyz_(x, y, z, indx, dist, knear);
+  }
+
 }

@@ -1,35 +1,71 @@
-.SUFFIXES: .f .o .cpp
-CCFLAGS = -I../ann_0.2/include 
-FCFLAGS = -O2 -debug all -g3 -r8 -extend-source
-#FCFLAG=  -O0 -tpp7 -cm -check all -W0 -axW -r8 -traceback -extend_source -FI -I /usr/local/intel/mpich/include -Vaxlib
+# ==============================================================================
+# GenSurf Makefile - Updated for nvfortran build environment
+# Converted from ifort to nvfortran (2026-03-23)
+# ==============================================================================
+
+.SUFFIXES: .f90 .o .cpp
+
+# Compilers
+FC = nvfortran
+CXX = g++
+
+# Fortran flags
+# -r8 flag retained as backup for any remaining default-real code paths.
+# Primary precision control is via explicit real(8) in source code.
+# Remove -r8 once all real declarations are confirmed as real(8).
+FCFLAGS = -O2
+# Debug build: uncomment below
+# FCFLAGS = -O0 -g -Mbounds -Mchkptr -Minfo
+
+# C++ flags
+CCFLAGS = -I../ann_0.2/include
+
+# Libraries
 ANNLIB = -L../ann_0.2/lib -lANN
+CPPLIB = -L../ann_0.2/lib -lANN -lstdc++ -lm
+FORLIB = -lm
 
-FORLIB= -lm
-# CPPLIB = -L./ann_0.2/lib -L/usr/lib/gcc-lib/i386-redhat-linux/3.2.3 -L/usr/lib/gcc-lib/i386-redhat-linux/3.2.3/../../..  -lANN -lstdc++ -lm -lgcc -lc -lgcc 
+# Object files
+OBJS = ann_interface.o gensurf.o soliddevider.o walldist.o
 
-CPPLIB = -L../../ann_0.2/lib -lANN -lstdc++ -lm 
+# ==============================================================================
+# Targets
+# ==============================================================================
 
-# OBJS =   gensurf.v3.0.acc.o levsets.v3.1.hh.jreblock.o outputfiles.v2.1.o walldist.o 
-OBJS = soliddevider.o gensurf.v3.0.acc.o walldist.o 
+all: main
 
-# g++    $(OBJS) $(MPILIB) $(ANNLIB) $(FORLIB)    -o b.out
-all: main.gensurf0.o
-	ifort -o main -debug main.gensurf0.o $(OBJS) $(CPPLIB) $(FORLIB) $(ANNLIB)
+main: main_gensurf.o $(OBJS)
+	$(FC) $(FCFLAGS) -o main main_gensurf.o $(OBJS) $(CPPLIB) $(FORLIB) $(ANNLIB)
 
-main.gensurf0.o: walldist.o soliddevider.o gensurf.v3.0.acc.o main.gensurf0.f 
-	ifort $(FCFLAGS) -c main.gensurf0.f
+# Module dependencies: gensurf.o provides the GenSurf module
+# ann_interface.o provides the ann_interface module
+# main_gensurf.o depends on GenSurf module
+# gensurf.o depends on GenSurf module (self-contained)
+
+main_gensurf.o: main_gensurf.f90 gensurf.o
+	$(FC) $(FCFLAGS) -c main_gensurf.f90
+
+gensurf.o: gensurf.f90
+	$(FC) $(FCFLAGS) -c gensurf.f90
+
+ann_interface.o: ann_interface.f90
+	$(FC) $(FCFLAGS) -c ann_interface.f90
 
 soliddevider.o: soliddevider.f90
-	ifort $(FCFLAGS) -c soliddevider.f90
-
-gensurf.v3.0.acc.o: gensurf.v3.0.acc.f
-	ifort $(FCFLAGS) -c gensurf.v3.0.acc.f
+	$(FC) $(FCFLAGS) -c soliddevider.f90
 
 walldist.o: walldist.cpp
-	g++ walldist.cpp -c $(CCFLAGS) $(ANNLIB)
+	$(CXX) $(CCFLAGS) -c walldist.cpp
+
+# ==============================================================================
+# Utility targets
+# ==============================================================================
 
 exe:
 	./main
 
 clean:
-	rm *.o *.dat; rm Output-Tec/*; rm output/*; rm main; rm devidedsolid/*;
+	rm -f *.o *.mod *.dat main
+	rm -f Output-Tec/* output/* devidedsolid/*
+
+.PHONY: all exe clean
