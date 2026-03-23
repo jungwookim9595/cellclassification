@@ -14,8 +14,8 @@ CXX = g++
 # Primary precision control is via explicit real(8) in source code.
 # Remove -r8 once all real declarations are confirmed as real(8).
 # FCFLAGS = -O2
-# Debug build:
-FCFLAGS = -O0 -g -Mbounds
+# Debug build (no bounds/ieee runtime):
+FCFLAGS = -O0 -g
 
 # C++ flags
 CCFLAGS = -I../ann_0.2/include
