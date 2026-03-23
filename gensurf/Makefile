@@ -15,7 +15,7 @@ CXX = g++
 # Remove -r8 once all real declarations are confirmed as real(8).
 # FCFLAGS = -O2
 # Debug build:
-FCFLAGS = -O0 -g -Mbounds -Mchkptr -Minfo
+FCFLAGS = -O0 -g -Mbounds
 
 # C++ flags
 CCFLAGS = -I../ann_0.2/include
